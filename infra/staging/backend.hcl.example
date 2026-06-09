@@ -1,0 +1,7 @@
+# Copy to backend.hcl (git-ignored) and fill in your values.
+# Then run: infra/setup.sh staging
+
+bucket       = "my-terraform-state-bucket"
+key          = "pdf-chart-parser/staging/terraform.tfstate"
+region       = "us-west-2"
+use_lockfile = true
