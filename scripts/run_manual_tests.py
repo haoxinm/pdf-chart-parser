@@ -49,7 +49,12 @@ def run_over_http(pdf_path: Path, server_url: str) -> dict:
                 },
             },
         }
-        resp = httpx.post(f"{server_url}/mcp", json=payload, timeout=60)
+        resp = httpx.post(
+            f"{server_url}/mcp",
+            json=payload,
+            headers={"Accept": "application/json"},
+            timeout=60,
+        )
         resp.raise_for_status()
         body = resp.json()
         content = body.get("result", {}).get("content", [])

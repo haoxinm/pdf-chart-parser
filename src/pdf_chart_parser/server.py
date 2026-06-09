@@ -13,6 +13,10 @@ mcp = FastMCP(
     "usage-chart-extractor",
     host=os.getenv("HOST", "0.0.0.0"),
     port=int(os.getenv("PORT", "8000")),
+    # Each tool call is independent — no session tracking or SSE streaming needed.
+    # json_response=True also satisfies AI agent clients that only send Accept: application/json.
+    json_response=True,
+    stateless_http=True,
 )
 
 
