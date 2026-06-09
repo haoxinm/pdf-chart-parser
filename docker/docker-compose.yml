@@ -1,0 +1,16 @@
+services:
+  mcp:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      MCP_TRANSPORT: streamable-http
+      HOST: 0.0.0.0
+      PORT: "8000"
+    volumes:
+      # Read-only fixture PDFs for local testing
+      - ../tests/fixtures:/app/tests/fixtures:ro
+      # Writable local directory — drop ad-hoc PDFs here as /data/<file>.pdf
+      - ../local:/data
