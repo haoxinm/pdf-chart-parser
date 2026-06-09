@@ -1,0 +1,9 @@
+.git
+.venv
+__pycache__
+*.pyc
+*.pyo
+tests/fixtures/pdfs
+manual_test_output/
+HANDOFF*.md
+.DS_Store
