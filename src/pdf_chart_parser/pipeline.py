@@ -32,13 +32,23 @@ def extract_usage_chart(
 
     Also includes an 'annotated_png' key (bytes | None) when return_annotated_image=True.
     """
-    pdf_bytes = load_pdf_bytes(pdf_path=pdf_path, pdf_base64=pdf_base64, pdf_url=pdf_url)
-    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        pdf_bytes = load_pdf_bytes(pdf_path=pdf_path, pdf_base64=pdf_base64, pdf_url=pdf_url)
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    except Exception as exc:
+        result = _failed_result([f"failed to load PDF: {exc}"])
+        result["page_markdown"] = ""
+        result["page"] = 0
+        return result
 
-    page_markdown = _extract_page_markdown(doc, page)
+    # Select the target page first, then render markdown scoped to that page so
+    # page_markdown and the reported page index describe the same page.
     target_page = _select_page(doc, page)
+    page_markdown = _extract_page_markdown(doc, target_page)
 
-    result = _try_vector(doc, target_page, chart_type, value_unit, render_dpi, return_annotated_image)
+    result = _try_vector(
+        doc, target_page, chart_type, value_unit, render_dpi, return_annotated_image
+    )
     result["page_markdown"] = page_markdown
     result["page"] = target_page
 
@@ -46,12 +56,10 @@ def extract_usage_chart(
     return result
 
 
-def _extract_page_markdown(doc: Any, page_hint: int | None) -> str:
-    """Return LLM-friendly markdown for the target page (or whole doc if page unknown)."""
+def _extract_page_markdown(doc: Any, page_index: int) -> str:
+    """Return LLM-friendly markdown for the selected page."""
     try:
-        if page_hint is not None:
-            return pymupdf4llm.to_markdown(doc, pages=[page_hint])
-        return pymupdf4llm.to_markdown(doc)
+        return pymupdf4llm.to_markdown(doc, pages=[page_index])
     except Exception:
         return ""
 
@@ -96,7 +104,13 @@ def _try_vector(
     if not raw_text:
         warnings.append("page appears scanned or raster; text layer empty")
         return _try_raster(
-            doc, page_index, chart_type_hint, value_unit_hint, render_dpi, return_annotated_image, warnings
+            doc,
+            page_index,
+            chart_type_hint,
+            value_unit_hint,
+            render_dpi,
+            return_annotated_image,
+            warnings,
         )
 
     try:
@@ -107,7 +121,13 @@ def _try_vector(
         if location is None:
             warnings.append("no qualifying chart region found via vector; falling back to raster")
             return _try_raster(
-                doc, page_index, chart_type_hint, value_unit_hint, render_dpi, return_annotated_image, warnings
+                doc,
+                page_index,
+                chart_type_hint,
+                value_unit_hint,
+                render_dpi,
+                return_annotated_image,
+                warnings,
             )
 
         chart_rect, detected_type, bar_rects, line_paths, plot_rect = location
@@ -132,7 +152,9 @@ def _try_vector(
         annotated_png = None
         if return_annotated_image:
             try:
-                annotated_png = annotate_chart(page, chart_rect, series, axes, render_dpi, detected_type)
+                annotated_png = annotate_chart(
+                    page, chart_rect, series, axes, render_dpi, detected_type
+                )
             except Exception as exc:
                 warnings.append(f"annotation failed: {exc}")
 
@@ -152,7 +174,13 @@ def _try_vector(
     except Exception as exc:
         warnings.append(f"vector extraction failed: {exc}")
         return _try_raster(
-            doc, page_index, chart_type_hint, value_unit_hint, render_dpi, return_annotated_image, warnings
+            doc,
+            page_index,
+            chart_type_hint,
+            value_unit_hint,
+            render_dpi,
+            return_annotated_image,
+            warnings,
         )
 
 
@@ -177,7 +205,13 @@ def _try_raster(
 
     try:
         return extract_raster(
-            doc, page_index, chart_type_hint, value_unit_hint, render_dpi, return_annotated_image, warnings
+            doc,
+            page_index,
+            chart_type_hint,
+            value_unit_hint,
+            render_dpi,
+            return_annotated_image,
+            warnings,
         )
     except Exception as exc:
         warnings.append(f"raster extraction failed: {exc}")
@@ -199,14 +233,18 @@ def _failed_result(warnings: list[str]) -> dict[str, Any]:
 
 def _compute_confidence(axes: Axes, series: list, warnings: list[str]) -> float:
     """Heuristic overall confidence score."""
+    if not series:
+        return 0.0
+    # Uncalibrated y-axis (< 2 tick labels) means every value defaults to 0.0;
+    # cap confidence low so a bogus all-zero series is not reported as reliable.
+    if len(getattr(axes.y_primary, "points", [])) < 2:
+        return 0.2
     base = 1.0
     r2 = getattr(axes.y_primary, "r_squared", 0.0)
     if r2 < 0.999:
         base -= 0.1
     if any("secondary" in w for w in warnings):
         base -= 0.02
-    if not series:
-        base = 0.0
     series_confidences = [s.confidence for s in series]
     if series_confidences:
         avg_series = sum(series_confidences) / len(series_confidences)

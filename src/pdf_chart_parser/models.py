@@ -21,6 +21,7 @@ class AxisCalibration(BaseModel):
     unit: str = "auto"
     points: list[AxisCalibrationPoint] = Field(default_factory=list)
     scale_per_point: float = 0.0
+    intercept: float = 0.0
     scale_per_pixel: float = 0.0
     r_squared: float = 0.0
 

@@ -7,8 +7,15 @@ from typing import Any
 import fitz
 import numpy as np
 
-from pdf_chart_parser.models import Axes, AxisCalibration, AxisInfo, DataPoint, Series
-from pdf_chart_parser.raster.ocr import ocr_axis_labels
+from pdf_chart_parser.models import (
+    Axes,
+    AxisCalibration,
+    AxisCalibrationPoint,
+    AxisInfo,
+    DataPoint,
+    Series,
+)
+from pdf_chart_parser.raster.ocr import ocr_axis_labels, ocr_axis_values
 
 
 def extract_raster(
@@ -61,19 +68,57 @@ def extract_raster(
     warnings.append("raster fallback used; accuracy may be lower than vector path")
 
     baseline_y = max(b[1] + b[3] for b in bar_candidates)
+
+    # Calibrate the y-axis from OCR'd left-axis tick labels so bar heights map
+    # to real values. The left strip shares the full image's y coordinates, so
+    # label y-centers align with bar pixel positions.
+    left_strip = img[:, : max(w_img // 8, 1)]
+    axis_pairs = ocr_axis_values(left_strip)
+    calib_points: list[AxisCalibrationPoint] = []
+    scale_a: float | None = None
+    intercept = 0.0
+    r_squared = 0.0
+    if len(axis_pairs) >= 2:
+        ys = np.array([p[1] for p in axis_pairs])
+        vals = np.array([p[0] for p in axis_pairs])
+        a, b = np.polyfit(ys, vals, 1)
+        predicted = a * ys + b
+        ss_res = float(np.sum((vals - predicted) ** 2))
+        ss_tot = float(np.sum((vals - vals.mean()) ** 2))
+        r_squared = 1.0 - ss_res / ss_tot if ss_tot > 1e-9 else 1.0
+        scale_a, intercept = float(a), float(b)
+        calib_points = [AxisCalibrationPoint(value=v, y=y) for v, y in axis_pairs]
+
+    calibrated = scale_a is not None
+    if calibrated:
+        unit = value_unit_hint if value_unit_hint != "auto" else "auto"
+        confidence = 0.6
+    else:
+        unit = "auto"
+        confidence = 0.3
+        warnings.append(
+            "raster: y-axis could not be calibrated (OCR unavailable or no numeric "
+            "ticks); bar values are raw pixel heights, not real units"
+        )
+
     series_points = []
     for i, (x, y, w, h) in enumerate(bar_candidates):
         bar_top_y = y
-        pixel_height = baseline_y - bar_top_y
+        if calibrated:
+            value = scale_a * bar_top_y - scale_a * baseline_y
+        else:
+            value = float(baseline_y - bar_top_y)
+        if value < 0:
+            value = 0.0
         x_label = bottom_labels[i] if i < len(bottom_labels) else str(i)
         series_points.append(
             DataPoint(
                 x_label=x_label,
                 x=float(x + w // 2),
-                value=float(pixel_height),
+                value=round(value, 4),
                 y=float(bar_top_y),
                 baseline_y=float(baseline_y),
-                confidence=0.7,
+                confidence=confidence,
             )
         )
 
@@ -81,21 +126,22 @@ def extract_raster(
         id="s0",
         type="bar",
         label="",
-        unit=value_unit_hint if value_unit_hint != "auto" else "auto",
+        unit=unit,
         axis="y_primary",
         color=[0.3, 0.5, 0.8],
-        confidence=0.7,
+        confidence=confidence,
         points=series_points,
     )
 
     axes = Axes(
         x=AxisInfo(kind="categorical", labels=bottom_labels),
         y_primary=AxisCalibration(
-            unit=value_unit_hint if value_unit_hint != "auto" else "auto",
-            points=[],
-            scale_per_point=1.0,
-            scale_per_pixel=1.0 / zoom,
-            r_squared=0.0,
+            unit=unit,
+            points=calib_points,
+            scale_per_point=abs(scale_a) if calibrated else 0.0,
+            intercept=intercept,
+            scale_per_pixel=abs(scale_a) if calibrated else 0.0,
+            r_squared=r_squared,
         ),
     )
 
@@ -106,7 +152,7 @@ def extract_raster(
         "axes": axes.model_dump(exclude_none=True),
         "series": [bar_series.model_dump()],
         "warnings": warnings,
-        "confidence": 0.6,
+        "confidence": confidence,
         "annotated_png": None,
     }
 

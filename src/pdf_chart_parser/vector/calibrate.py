@@ -68,13 +68,20 @@ def calibrate_axes(
         spans, chart_rect, bounds, side="left", value_unit_hint=value_unit_hint
     )
     warnings.extend(y_warnings)
+    if y_primary is None:
+        warnings.append(
+            "y-axis calibration failed: fewer than 2 numeric tick labels found; "
+            "values are uncalibrated"
+        )
 
     y_secondary = None
     y_sec_unit = None
     right_fit, r_unit, r_warnings = _calibrate_y_axis(
         spans, chart_rect, bounds, side="right", value_unit_hint="auto"
     )
-    if right_fit is not None and right_fit.r_squared > 0.95:
+    # Require >= 3 points: a 2-point fit is always exact (r² == 1.0), so two
+    # stray right-side numbers would otherwise spawn a phantom secondary axis.
+    if right_fit is not None and right_fit.r_squared > 0.95 and len(right_fit.points) >= 3:
         y_secondary = right_fit
         y_sec_unit = r_unit
         warnings.append("secondary y-axis detected")
@@ -93,6 +100,7 @@ def calibrate_axes(
         unit=resolved_unit,
         points=y_primary.points if y_primary else [],
         scale_per_point=float(y_primary.a) if y_primary else 0.0,
+        intercept=float(y_primary.b) if y_primary else 0.0,
         scale_per_pixel=float(scale_pp),
         r_squared=float(r2),
     )
@@ -103,6 +111,7 @@ def calibrate_axes(
             unit=_resolve_unit(y_sec_unit, "auto"),
             points=y_secondary.points,
             scale_per_point=float(y_secondary.a),
+            intercept=float(y_secondary.b),
             scale_per_pixel=float(abs(y_secondary.a)),
             r_squared=float(y_secondary.r_squared),
         )
@@ -191,13 +200,14 @@ def _calibrate_y_axis(
 
 
 def y_to_value(y: float, calibration: AxisCalibration) -> float:
-    """Convert a y pixel coordinate to a calibrated value."""
+    """Convert a y pixel coordinate to a calibrated value.
+
+    Reuses the slope/intercept computed during calibration rather than
+    re-fitting on every call.
+    """
     if not calibration.points or len(calibration.points) < 2:
         return 0.0
-    ys = np.array([p.y for p in calibration.points])
-    vals = np.array([p.value for p in calibration.points])
-    fit = np.polyfit(ys, vals, 1)
-    return float(fit[0] * y + fit[1])
+    return calibration.scale_per_point * y + calibration.intercept
 
 
 def _calibrate_x_axis(

@@ -24,6 +24,24 @@ class TextSpan:
         return (self.bbox[1] + self.bbox[3]) / 2
 
 
+def nearest_x_label(x: float, labels: list[str], x_domain: fitz.Rect) -> str:
+    """Map an x coordinate to the nearest categorical label by position.
+
+    Labels are assumed evenly distributed across the plot's x domain. Used by
+    both bar and line extraction so they assign labels the same way.
+    """
+    if not labels:
+        return ""
+    plot_width = x_domain.x1 - x_domain.x0
+    if plot_width <= 0:
+        return labels[0]
+    n = len(labels)
+    rel = (x - x_domain.x0) / plot_width
+    idx = int(round(rel * (n - 1)))
+    idx = max(0, min(idx, n - 1))
+    return labels[idx]
+
+
 def collect_text_spans(page: fitz.Page) -> list[TextSpan]:
     """Return all non-empty text spans from the page with their bboxes."""
     spans: list[TextSpan] = []

@@ -6,7 +6,9 @@ import fitz
 
 from pdf_chart_parser.models import Axes, DataPoint, Series
 from pdf_chart_parser.vector.calibrate import y_to_value
+from pdf_chart_parser.vector.color import cluster_by_color, quantize_color
 from pdf_chart_parser.vector.drawings import RectItem
+from pdf_chart_parser.vector.text import nearest_x_label
 
 
 def extract_bars(
@@ -35,19 +37,20 @@ def extract_bars(
 
     # Get x labels
     x_labels = axes.x.labels
-    n_labels = len(x_labels)
+    # Map bar x-centers to labels by position; labels span the bars' x extent.
+    x_domain = fitz.Rect(
+        min(r.rect.x0 for r in sorted_bars), 0, max(r.rect.x1 for r in sorted_bars), 0
+    )
 
-    # Group bars by color (each color = one series)
-    color_groups: dict[tuple, list[RectItem]] = {}
-    for bar in sorted_bars:
-        key = _quantize_color(bar.fill)
-        color_groups.setdefault(key, []).append(bar)
+    # Group bars by color, using the same metric detection used (each color = one series)
+    color_groups = cluster_by_color(sorted_bars, lambda r: r.fill)
 
     # If multiple colors, each is a separate series; otherwise one series
     all_series = []
     series_idx = 0
-    for color_key, group_bars in color_groups.items():
+    for group_bars in color_groups:
         group_bars.sort(key=lambda r: r.rect.x0)
+        color_key = quantize_color(group_bars[0].fill)
         points: list[DataPoint] = []
         for i, bar in enumerate(group_bars):
             x_center = (bar.rect.x0 + bar.rect.x1) / 2
@@ -56,12 +59,7 @@ def extract_bars(
                 warnings.append(f"negative bar value {value:.2f} at index {i}; clipping to 0")
                 value = 0.0
 
-            # Match x label by position
-            x_label = ""
-            if n_labels > 0:
-                # Find closest label by x_center position
-                if i < n_labels:
-                    x_label = x_labels[i]
+            x_label = nearest_x_label(x_center, x_labels, x_domain)
             bar_conf = _bar_confidence(bar, group_bars, axes, median_bottom)
             points.append(
                 DataPoint(
@@ -89,12 +87,6 @@ def extract_bars(
         series_idx += 1
 
     return all_series, warnings
-
-
-def _quantize_color(c: tuple | None, buckets: int = 10) -> tuple:
-    if c is None:
-        return (0,)
-    return tuple(round(v * buckets) / buckets for v in c[:3])
 
 
 def _bar_confidence(

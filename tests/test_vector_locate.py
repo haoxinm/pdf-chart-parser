@@ -6,8 +6,9 @@ from pathlib import Path
 
 import fitz
 
+from pdf_chart_parser.vector.color import color_saturation
 from pdf_chart_parser.vector.drawings import collect_drawings
-from pdf_chart_parser.vector.locate import _color_saturation, _is_axis_or_gridline, locate_chart
+from pdf_chart_parser.vector.locate import _is_axis_or_gridline, locate_chart
 from pdf_chart_parser.vector.text import collect_text_spans
 
 PDFS_DIR = Path(__file__).parent / "fixtures" / "pdfs"
@@ -81,11 +82,11 @@ def test_axis_or_gridline_data_line():
 
 
 def test_color_saturation_saturated():
-    assert _color_saturation((0.9, 0.1, 0.1)) > 0.5
+    assert color_saturation((0.9, 0.1, 0.1)) > 0.5
 
 
 def test_color_saturation_gray():
-    assert _color_saturation((0.5, 0.5, 0.5)) < 0.01
+    assert color_saturation((0.5, 0.5, 0.5)) < 0.01
 
 
 def test_hint_bar_suppresses_lines(synthetic_hybrid_pdf):

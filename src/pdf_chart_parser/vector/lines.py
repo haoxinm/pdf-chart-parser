@@ -6,10 +6,9 @@ import fitz
 
 from pdf_chart_parser.models import Axes, DataPoint, Series
 from pdf_chart_parser.vector.calibrate import y_to_value
+from pdf_chart_parser.vector.color import quantize_color
 from pdf_chart_parser.vector.drawings import StrokedPath
-from pdf_chart_parser.vector.text import TextSpan
-
-_MARKER_SIZE_THRESHOLD = 8.0  # max bbox dimension to be a marker shape
+from pdf_chart_parser.vector.text import TextSpan, nearest_x_label
 
 
 def extract_lines(
@@ -34,7 +33,7 @@ def extract_lines(
     # Group paths by color
     color_groups: dict[tuple, list[StrokedPath]] = {}
     for path in line_paths:
-        key = _quantize_color(path.stroke)
+        key = quantize_color(path.stroke)
         color_groups.setdefault(key, []).append(path)
 
     # Build legend: small colored text-adjacent swatches → label
@@ -56,21 +55,30 @@ def extract_lines(
 
         all_pts.sort(key=lambda p: p.x)
 
-        # Determine which y-axis to use
+        # Determine which y-axis to use. By the usual dual-axis convention,
+        # lines read against the secondary (right) axis when one is present and
+        # comparably well-fit. Only keep lines on the primary when both axes
+        # share a *known* unit (a same-unit secondary is likely redundant) —
+        # the old `unit != unit` test silently failed for unlabeled ("auto")
+        # axes and mapped every line to the wrong scale.
         axis_id = "y_primary"
         calibration = axes.y_primary
         if axes.y_secondary is not None:
-            # Use secondary if the secondary axis R² is better or unit matches
-            sec_r2 = axes.y_secondary.r_squared if axes.y_secondary else 0
+            sec_r2 = axes.y_secondary.r_squared
             prim_r2 = axes.y_primary.r_squared
-            if sec_r2 >= prim_r2 * 0.98 and axes.y_secondary.unit != axes.y_primary.unit:
+            units_known_and_equal = (
+                axes.y_secondary.unit != "auto"
+                and axes.y_primary.unit != "auto"
+                and axes.y_secondary.unit == axes.y_primary.unit
+            )
+            if sec_r2 >= prim_r2 * 0.98 and not units_known_and_equal:
                 axis_id = "y_secondary"
                 calibration = axes.y_secondary
 
         points: list[DataPoint] = []
         for pt in all_pts:
             value = y_to_value(pt.y, calibration)
-            x_label = _nearest_x_label(pt.x, x_labels, x_domain)
+            x_label = nearest_x_label(pt.x, x_labels, x_domain)
             points.append(
                 DataPoint(
                     x_label=x_label,
@@ -125,31 +133,11 @@ def _build_legend(
         # Find adjacent text
         for span in spans:
             if abs(span.y_center - (bbox.y0 + bbox.y1) / 2) < 8 and span.bbox[0] > bbox.x1:
-                color_key = _quantize_color(path.stroke)
+                color_key = quantize_color(path.stroke)
                 if color_key not in legend:
                     legend[color_key] = span.text.strip()
                     break
     return legend
-
-
-def _nearest_x_label(x: float, labels: list[str], x_domain: fitz.Rect) -> str:
-    if not labels:
-        return ""
-    plot_width = x_domain.x1 - x_domain.x0
-    if plot_width <= 0:
-        return labels[0]
-    n = len(labels)
-    # Map x to label index using the inner plot domain boundaries
-    rel = (x - x_domain.x0) / plot_width
-    idx = int(round(rel * (n - 1)))
-    idx = max(0, min(idx, n - 1))
-    return labels[idx]
-
-
-def _quantize_color(c: tuple | None, buckets: int = 10) -> tuple:
-    if c is None:
-        return (0,)
-    return tuple(round(v * buckets) / buckets for v in c[:3])
 
 
 def _deduplicate_points(points: list[DataPoint]) -> list[DataPoint]:

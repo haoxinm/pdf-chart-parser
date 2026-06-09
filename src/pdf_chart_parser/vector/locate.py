@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
-import math
-
 import fitz
 
+from pdf_chart_parser.vector.color import (
+    COLOR_DIST_THRESHOLD,
+    color_distance,
+    color_lightness,
+    color_saturation,
+    quantize_color,
+)
 from pdf_chart_parser.vector.drawings import RectItem, StrokedPath
 from pdf_chart_parser.vector.text import TextSpan
 
 # Minimum bars to consider a valid bar group
 MIN_BARS = 4
-# Color similarity threshold (max Euclidean distance in RGB for "same color")
-COLOR_DIST_THRESHOLD = 0.15
 # Minimum points for a line series to span the plot
 MIN_LINE_POINTS = 4
 
@@ -64,19 +67,6 @@ def locate_chart(
     return chart_rect, detected_type, best_bars or [], best_lines, plot_rect
 
 
-def _color_distance(a: tuple | None, b: tuple | None) -> float:
-    if a is None or b is None:
-        return 1.0
-    n = min(len(a), len(b), 3)
-    return math.sqrt(sum((a[i] - b[i]) ** 2 for i in range(n)))
-
-
-def _quantize_color(c: tuple | None) -> tuple | None:
-    if c is None:
-        return None
-    return tuple(round(v * 10) / 10 for v in c[:3])
-
-
 def _find_bar_groups(rects: list[RectItem]) -> list[list[RectItem]]:
     """Group fill rectangles into candidate bar groups."""
     # Only filled rects with significant height
@@ -84,7 +74,7 @@ def _find_bar_groups(rects: list[RectItem]) -> list[list[RectItem]]:
         r
         for r in rects
         if r.fill is not None
-        and _color_saturation(r.fill) > 0.05  # not white/near-white
+        and color_saturation(r.fill) > 0.05  # not white/near-white
         and r.rect.height > 5
         and r.rect.width > 2
         and r.rect.height > r.rect.width * 0.5  # taller than wide (bars are vertical)
@@ -106,7 +96,7 @@ def _find_bar_groups(rects: list[RectItem]) -> list[list[RectItem]]:
             if j in used:
                 continue
             if (
-                _color_distance(r.fill, r2.fill) < COLOR_DIST_THRESHOLD
+                color_distance(r.fill, r2.fill) < COLOR_DIST_THRESHOLD
                 and abs(r.rect.width - r2.rect.width) < r.rect.width * 0.3
             ):
                 group.append(r2)
@@ -141,7 +131,7 @@ def _find_line_series(paths: list[StrokedPath], spans: list[TextSpan]) -> list[l
         if path.stroke is None:
             continue
         # Must have some saturation (not gray/black axes)
-        if _color_saturation(path.stroke) < 0.1 and _color_lightness(path.stroke) < 0.7:
+        if color_saturation(path.stroke) < 0.1 and color_lightness(path.stroke) < 0.7:
             continue
         data_paths.append(path)
 
@@ -151,7 +141,7 @@ def _find_line_series(paths: list[StrokedPath], spans: list[TextSpan]) -> list[l
     # Group by stroke color
     color_groups: dict[tuple, list[StrokedPath]] = {}
     for path in data_paths:
-        key = _quantize_color(path.stroke) or (0,)
+        key = quantize_color(path.stroke) or (0,)
         color_groups.setdefault(key, []).append(path)
 
     return [group for group in color_groups.values() if len(group) >= 1]
@@ -174,28 +164,12 @@ def _is_axis_or_gridline(path: StrokedPath) -> bool:
         return True
     # Very thin gray lines
     if path.stroke is not None:
-        sat = _color_saturation(path.stroke)
-        light = _color_lightness(path.stroke)
+        sat = color_saturation(path.stroke)
+        light = color_lightness(path.stroke)
         if sat < 0.05 and light > 0.5:
             return True
 
     return False
-
-
-def _color_saturation(color: tuple | None) -> float:
-    if color is None:
-        return 0.0
-    r, g, b = (color[i] if i < len(color) else 0.0 for i in range(3))
-    cmax = max(r, g, b)
-    cmin = min(r, g, b)
-    return cmax - cmin
-
-
-def _color_lightness(color: tuple | None) -> float:
-    if color is None:
-        return 0.0
-    r, g, b = (color[i] if i < len(color) else 0.0 for i in range(3))
-    return (max(r, g, b) + min(r, g, b)) / 2
 
 
 def _best_bar_group(groups: list[list[RectItem]], spans: list[TextSpan]) -> list[RectItem] | None:
