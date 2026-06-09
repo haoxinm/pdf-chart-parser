@@ -5,9 +5,14 @@ from __future__ import annotations
 import io
 
 import fitz
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
 from pdf_chart_parser.models import Axes, Series
+
+_ANNOTATION_TEXT_COLOR = (30, 30, 30)
+_ANNOTATION_CIRCLE_FILL = (255, 255, 255)
+_ANNOTATION_CIRCLE_OUTLINE = (40, 40, 40)
+_ANNOTATION_TEXT_BG = (245, 245, 245)
 
 
 def annotate_chart(
@@ -23,6 +28,7 @@ def annotate_chart(
     pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), clip=chart_rect)
     img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
     draw = ImageDraw.Draw(img)
+    _annot_font = ImageFont.load_default(size=13)
 
     # Convert PDF coordinates to image coordinates
     def pdf_to_img(px: float, py: float) -> tuple[int, int]:
@@ -51,13 +57,24 @@ def annotate_chart(
     # Annotate bar series
     for ser in series:
         if ser.type == "bar":
-            color = _series_color_rgb(ser)
             for pt in ser.points:
                 ix, iy = pdf_to_img(pt.x, pt.y)
-                # Draw bar-top marker
-                r = 4
-                draw.ellipse([(ix - r, iy - r), (ix + r, iy + r)], outline=color, width=2)
-                draw.text((ix + 4, iy - 10), f"{pt.value:.1f}", fill=color)
+                r = 5
+                draw.ellipse(
+                    [(ix - r, iy - r), (ix + r, iy + r)],
+                    fill=_ANNOTATION_CIRCLE_FILL,
+                    outline=_ANNOTATION_CIRCLE_OUTLINE,
+                    width=2,
+                )
+                label = f"{pt.value:.1f}"
+                tx, ty = ix + 6, iy - 12
+                bbox = draw.textbbox((tx, ty), label, font=_annot_font)
+                pad = 1
+                draw.rectangle(
+                    [bbox[0] - pad, bbox[1] - pad, bbox[2] + pad, bbox[3] + pad],
+                    fill=_ANNOTATION_TEXT_BG,
+                )
+                draw.text((tx, ty), label, fill=_ANNOTATION_TEXT_COLOR, font=_annot_font)
 
     # Annotate line series
     for ser in series:
