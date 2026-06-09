@@ -42,10 +42,23 @@ def extract_bars(
         min(r.rect.x0 for r in sorted_bars), 0, max(r.rect.x1 for r in sorted_bars), 0
     )
 
-    # Group bars by color, using the same metric detection used (each color = one series)
+    # Group bars by color (each distinct color = one series)
     color_groups = cluster_by_color(sorted_bars, lambda r: r.fill)
 
-    # If multiple colors, each is a separate series; otherwise one series
+    # Merge small color groups (e.g. a single highlighted "current period" bar) into
+    # the dominant series so they are not reported as separate one-bar series.
+    _MIN_SERIES_BARS = 4
+    if len(color_groups) > 1:
+        large = [g for g in color_groups if len(g) >= _MIN_SERIES_BARS]
+        small = [g for g in color_groups if len(g) < _MIN_SERIES_BARS]
+        if large and small:
+            dominant = max(large, key=len)
+            for g in small:
+                dominant.extend(g)
+            dominant.sort(key=lambda r: r.rect.x0)
+            color_groups = large
+
+    # If multiple colors remain, each is a separate series; otherwise one series
     all_series = []
     series_idx = 0
     for group_bars in color_groups:

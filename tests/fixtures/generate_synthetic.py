@@ -17,6 +17,18 @@ MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", 
 
 # Known values for reproducibility
 BAR_VALUES = [120.0, 135.5, 98.0, 145.2, 160.8, 175.0, 188.5, 172.3, 150.0, 130.7, 115.0, 140.0]
+
+# 15-month sliding window (MAR prior-year through MAY current-year) for the
+# utility-context chart.  Last bar uses a different fill color (highlighted
+# current month) to exercise the baseline-absorption fix.
+CONTEXT_MONTHS = [
+    "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP",
+    "OCT", "NOV", "DEC", "JAN", "FEB", "MAR", "APR", "MAY",
+]
+CONTEXT_VALUES = [
+    50.0, 40.0, 40.0, 90.0, 190.0, 210.0, 200.0,
+    115.0, 60.0, 45.0, 45.0, 50.0, 40.0, 45.0, 50.0,
+]
 LINE_VALUES = [55.1, 62.3, 78.9, 85.0, 90.2, 95.5, 88.7, 82.1, 75.3, 68.0, 60.4, 58.8]
 HYBRID_BAR_VALUES = [
     210.0,
@@ -289,6 +301,98 @@ def _make_hybrid_pdf(path: Path) -> None:
     doc.close()
 
 
+def _make_bar_with_context_pdf(path: Path) -> None:
+    """Bar chart that exercises three previously-regressed behaviours:
+
+    1. A table-header row placed ~30 pt above the chart (within the old uniform
+       60-pt search margin, but outside the new 20-pt top margin).  Verifies
+       that chart_rect.y0 does not extend into the header.
+
+    2. 15 bars where the last one uses a different fill color (the "highlighted
+       current month" pattern).  Verifies that the differently-colored bar is
+       absorbed into the main series rather than silently dropped.
+
+    3. Unrelated section text ~80 pt below the chart baseline (further than the
+       new chart_rect.y1 + 10 pt upper bound).  Verifies that those spans are
+       not captured as x-axis labels.
+    """
+    import fitz
+
+    doc = fitz.open()
+    page = doc.new_page(width=612, height=792)
+
+    chart_left = 100.0
+    chart_right = 560.0
+    chart_top = 270.0
+    chart_bottom = 430.0
+    chart_w = chart_right - chart_left
+    chart_h = chart_bottom - chart_top
+    max_val = 240.0
+    n = len(CONTEXT_VALUES)
+    bar_width = chart_w / (n * 1.5)
+    bar_spacing = chart_w / n
+
+    # Header row ~30 pt above chart_top.  Its y_center (~237) is above the new
+    # 20-pt top search window (y0_search = core.y0 - 20 ≈ 270) but inside the
+    # old 60-pt window (y0_search_old = core.y0 - 60 ≈ 230).
+    header_y = chart_top - 30  # baseline at 240, y_center ≈ 237
+    page.insert_text(fitz.Point(chart_left, header_y), "Usage History", fontsize=8)
+    page.insert_text(fitz.Point(chart_left + 90, header_y), "SERVICE ADDRESS", fontsize=8)
+    page.insert_text(fitz.Point(chart_left + 200, header_y), "METER", fontsize=8)
+
+    # Y-axis tick labels and gridlines
+    for tick in [0, 100, 200]:
+        y_px = chart_bottom - (tick / max_val) * chart_h
+        page.draw_line(fitz.Point(chart_left - 5, y_px), fitz.Point(chart_left, y_px))
+        page.insert_text(fitz.Point(chart_left - 40, y_px + 4), f"${tick}", fontsize=9)
+        page.draw_line(
+            fitz.Point(chart_left, y_px),
+            fitz.Point(chart_right, y_px),
+            color=(0.8, 0.8, 0.8),
+            width=0.5,
+        )
+
+    # Axis lines
+    page.draw_line(
+        fitz.Point(chart_left, chart_top), fitz.Point(chart_left, chart_bottom), width=1.5
+    )
+    page.draw_line(
+        fitz.Point(chart_left, chart_bottom), fitz.Point(chart_right, chart_bottom), width=1.5
+    )
+
+    # 14 same-color bars + 1 highlighted current-month bar (different fill)
+    main_fill = (0.533, 0.463, 0.859)
+    highlight_fill = (0.271, 0.0, 0.647)
+    for i, val in enumerate(CONTEXT_VALUES):
+        bar_top = chart_bottom - (val / max_val) * chart_h
+        bar_x0 = chart_left + i * bar_spacing + (bar_spacing - bar_width) / 2
+        bar_x1 = bar_x0 + bar_width
+        fill = highlight_fill if i == n - 1 else main_fill
+        page.draw_rect(fitz.Rect(bar_x0, bar_top, bar_x1, chart_bottom), fill=fill, color=None)
+        page.insert_text(
+            fitz.Point(bar_x0 + bar_width / 2 - 8, chart_bottom + 12),
+            CONTEXT_MONTHS[i],
+            fontsize=8,
+        )
+
+    # Unrelated section text ~80 pt below chart_bottom.  With the old
+    # unbounded x-label search these spans would pollute axes.x.labels.
+    env_y = chart_bottom + 80
+    page.insert_text(fitz.Point(chart_left, env_y), "Your Environmental Impact", fontsize=10)
+    page.insert_text(
+        fitz.Point(chart_left, env_y + 15),
+        "230 kWh of renewable energy is equivalent to the CO2",
+        fontsize=9,
+    )
+    page.insert_text(fitz.Point(chart_left + 220, env_y), "Your Rewards", fontsize=10)
+    page.insert_text(
+        fitz.Point(chart_left, env_y + 30), "BAGS OF TRASH RECYCLED", fontsize=9
+    )
+
+    doc.save(str(path))
+    doc.close()
+
+
 def _make_raster_pdf(path: Path, source_pdf: Path) -> None:
     """Rasterize the bar chart PDF to create a scanned-image PDF."""
     import fitz
@@ -375,6 +479,25 @@ def main() -> None:
     print("Generating rasterized (scanned) bar chart PDF...")
     _make_raster_pdf(PDFS_DIR / "bar_raster.pdf", PDFS_DIR / "bar.pdf")
     # No expected for raster — pixel-space values are not calibrated without OCR
+
+    print("Generating bar-with-context chart PDF (regression fixture)...")
+    _make_bar_with_context_pdf(PDFS_DIR / "bar_with_context.pdf")
+    generate_expected(
+        "bar_with_context",
+        "bar",
+        [
+            {
+                "type": "bar",
+                "unit": "dollars",
+                "points": [
+                    {"x_label": m, "value": v}
+                    for m, v in zip(CONTEXT_MONTHS, CONTEXT_VALUES)
+                ],
+            }
+        ],
+        tolerance_pct=5.0,
+    )
+
     print(
         "Done. Synthetic fixtures written to "
         "tests/fixtures/pdfs/synthetic/ and tests/fixtures/expected/synthetic/"
