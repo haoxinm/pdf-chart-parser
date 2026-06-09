@@ -113,6 +113,30 @@ def _find_bar_groups(rects: list[RectItem]) -> list[list[RectItem]]:
         if len(aligned) >= MIN_BARS:
             valid_groups.append(aligned)
 
+    # Absorb leftover bars (e.g. a highlighted "current period" bar with a different
+    # fill color that forms a group of 1) into any valid group that shares their
+    # baseline and whose x-extent is adjacent.
+    in_valid: set[int] = {id(r) for grp in valid_groups for r in grp}
+    leftovers = [c for c in candidates if id(c) not in in_valid]
+    if leftovers and valid_groups:
+        absorbed: set[int] = set()
+        for group in valid_groups:
+            baseline = sorted([r.rect.y1 for r in group])[len(group) // 2]
+            grp_x0 = min(r.rect.x0 for r in group)
+            grp_x1 = max(r.rect.x1 for r in group)
+            avg_w = sum(r.rect.width for r in group) / len(group)
+            for c in leftovers:
+                if id(c) in absorbed:
+                    continue
+                cx = (c.rect.x0 + c.rect.x1) / 2
+                if (
+                    abs(c.rect.y1 - baseline) < 5
+                    and grp_x0 - avg_w * 2 <= cx <= grp_x1 + avg_w * 2
+                ):
+                    group.append(c)
+                    absorbed.add(id(c))
+                    break
+
     return valid_groups
 
 
@@ -275,9 +299,14 @@ def _compute_chart_rect(
     """Union bbox of bars + lines, expanded to include nearby axis labels."""
     core = _plot_rect(bar_rects, line_paths)
 
-    # Expand to include axis labels (text within 60px around the chart core)
-    MARGIN = 60
-    search = fitz.Rect(core.x0 - MARGIN, core.y0 - MARGIN, core.x1 + MARGIN, core.y1 + MARGIN)
+    # Use directional margins: generous left/bottom for axis labels, small top/right
+    # to avoid pulling in table headers or other content above/beside the chart.
+    search = fitz.Rect(
+        core.x0 - 70,  # left: room for y-axis value labels
+        core.y0 - 20,  # top: minimal clearance above bars
+        core.x1 + 20,  # right: minimal padding
+        core.y1 + 55,  # bottom: room for x-axis category labels
+    )
     nearby_x: list[float] = []
     nearby_y: list[float] = []
     for s in spans:
@@ -287,4 +316,11 @@ def _compute_chart_rect(
 
     all_x = [core.x0, core.x1] + nearby_x
     all_y = [core.y0, core.y1] + nearby_y
-    return fitz.Rect(min(all_x), min(all_y), max(all_x), max(all_y))
+    # Add a small uniform pad so no axis label is clipped at the boundary.
+    _PAD = 5
+    return fitz.Rect(
+        min(all_x) - _PAD,
+        min(all_y) - _PAD,
+        max(all_x) + _PAD,
+        max(all_y) + _PAD,
+    )

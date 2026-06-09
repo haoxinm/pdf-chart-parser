@@ -219,8 +219,14 @@ def _calibrate_x_axis(
     bx1 = bounds.x1 if bounds else chart_rect.x1
     by1 = bounds.y1 if bounds else chart_rect.y1
 
-    # X-axis labels are below the plot bottom (within a reasonable distance)
-    below = [s for s in spans if s.bbox[1] >= by1 - 5 and bx0 - 20 <= s.x_center <= bx1 + 20]
+    # X-axis labels sit just below the plot baseline; cap the search at 60 pt to
+    # avoid capturing text from unrelated sections further down the page.
+    _MAX_BELOW = 60
+    below = [
+        s for s in spans
+        if by1 - 10 <= s.y_center <= by1 + _MAX_BELOW
+        and bx0 - 20 <= s.x_center <= bx1 + 20
+    ]
     below.sort(key=lambda s: s.x_center)
     labels = [s.text.strip() for s in below if s.text.strip()]
 
