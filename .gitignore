@@ -39,6 +39,17 @@ manual_test_output/
 # Handoff / session artifacts
 HANDOFF*.md
 
+# Infrastructure — Terraform
+infra/**/.terraform/
+infra/**/.terraform.lock.hcl
+infra/**/terraform.tfstate
+infra/**/terraform.tfstate.backup
+infra/**/terraform.tfvars
+infra/**/backend.hcl
+infra/**/*.tfplan
+infra/**/crash.log
+infra/**/errored.tfstate*
+
 # OS
 .DS_Store
 Thumbs.db

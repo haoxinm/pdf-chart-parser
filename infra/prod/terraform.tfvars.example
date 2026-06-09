@@ -1,0 +1,30 @@
+# Copy to terraform.tfvars (git-ignored) and fill in your values.
+# Then run: infra/setup.sh prod
+
+# AWS region
+aws_region = "us-west-2"
+
+# EKS cluster name
+cluster_name = "my-eks-cluster-prod"
+
+# ARN of the Fargate pod-execution role (created with the EKS cluster)
+fargate_execution_role_arn = "arn:aws:iam::123456789012:role/my-eks-fargate-execution-role"
+
+# Private subnets for Fargate pods — at least 2, in separate AZs
+subnet_ids = [
+  "subnet-0123456789abcdef0",
+  "subnet-0123456789abcdef1",
+]
+
+# Bootstrap image (full ECR URI:tag). After the first apply, use
+# scripts/release.sh for image updates — no re-apply needed.
+image = "123456789012.dkr.ecr.us-west-2.amazonaws.com/pdf-chart-parser:latest"
+
+# Number of replicas — default 2 for HA in prod
+replicas = 2
+
+# AWS resource tags
+tags = {
+  env     = "prod"
+  service = "pdf-chart-parser"
+}
