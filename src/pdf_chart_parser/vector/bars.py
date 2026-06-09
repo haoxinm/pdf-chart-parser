@@ -27,14 +27,6 @@ def extract_bars(
     # Sort bars left-to-right
     sorted_bars = sorted(bar_rects, key=lambda r: r.rect.x0)
 
-    # Establish baseline (shared bottom y of bars)
-    bottoms = [r.rect.y1 for r in sorted_bars]
-    median_bottom = sorted(bottoms)[len(bottoms) // 2]
-    baseline_value = y_to_value(median_bottom, axes.y_primary)
-
-    if abs(baseline_value) > 5:
-        warnings.append(f"non-zero baseline detected: baseline_value={baseline_value:.2f}")
-
     # Get x labels
     x_labels = axes.x.labels
     # Map bar x-centers to labels by position; labels span the bars' x extent.
@@ -64,23 +56,51 @@ def extract_bars(
     for group_bars in color_groups:
         group_bars.sort(key=lambda r: r.rect.x0)
         color_key = quantize_color(group_bars[0].fill)
+
+        # Determine baseline for this color group.
+        # For the lower series in a stacked chart all bars share the same y1 (chart
+        # baseline).  For the upper (stacked) series y1 varies per bar — each bar sits
+        # on top of the corresponding lower bar.  Detect this via the spread of y1
+        # values; if spread > 5 pt, use each bar's own y1 as its individual baseline
+        # so the extracted value equals just the height of that segment.
+        group_bottoms = [r.rect.y1 for r in group_bars]
+        median_bottom = sorted(group_bottoms)[len(group_bottoms) // 2]
+        bottom_spread = max(group_bottoms) - min(group_bottoms)
+        per_bar_baseline = bottom_spread > 5
+
+        if not per_bar_baseline:
+            group_baseline_value = y_to_value(median_bottom, axes.y_primary)
+            if abs(group_baseline_value) > 5:
+                warnings.append(
+                    f"non-zero baseline detected: baseline_value={group_baseline_value:.2f}"
+                )
+
         points: list[DataPoint] = []
         for i, bar in enumerate(group_bars):
             x_center = (bar.rect.x0 + bar.rect.x1) / 2
-            value = y_to_value(bar.rect.y0, axes.y_primary) - baseline_value
+
+            if per_bar_baseline:
+                # Stacked bar: value = height of just this segment
+                bar_baseline_value = y_to_value(bar.rect.y1, axes.y_primary)
+                value = y_to_value(bar.rect.y0, axes.y_primary) - bar_baseline_value
+                baseline_y = bar.rect.y1
+            else:
+                value = y_to_value(bar.rect.y0, axes.y_primary) - group_baseline_value
+                baseline_y = median_bottom
+
             if value < -1:
                 warnings.append(f"negative bar value {value:.2f} at index {i}; clipping to 0")
                 value = 0.0
 
             x_label = nearest_x_label(x_center, x_labels, x_domain)
-            bar_conf = _bar_confidence(bar, group_bars, axes, median_bottom)
+            bar_conf = _bar_confidence(bar, group_bars, axes, baseline_y)
             points.append(
                 DataPoint(
                     x_label=x_label,
                     x=round(x_center, 2),
                     value=round(value, 4),
                     y=round(bar.rect.y0, 2),
-                    baseline_y=round(median_bottom, 2),
+                    baseline_y=round(baseline_y, 2),
                     confidence=bar_conf,
                 )
             )

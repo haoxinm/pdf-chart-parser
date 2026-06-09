@@ -37,6 +37,13 @@ def extract_usage_chart(
     and optionally an annotated PNG of the chart region.
 
     Provide exactly one of pdf_path, pdf_base64, or pdf_url.
+
+    The result includes a 'series' list.  When the chart contains multiple
+    utility types (e.g. electricity and gas on the same chart), each type is
+    returned as a separate Series entry with its own 'id' ('s0', 's1', …) and
+    'color'.  The caller is responsible for determining which series corresponds
+    to which utility — use the bar colors, the series order, and the page
+    Markdown context to make that determination.
     """
     result = _run_pipeline(
         pdf_path=pdf_path,

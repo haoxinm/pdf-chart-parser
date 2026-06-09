@@ -24,6 +24,35 @@ class TextSpan:
         return (self.bbox[1] + self.bbox[3]) / 2
 
 
+def collect_axis_label_rows(spans: list["TextSpan"]) -> list["TextSpan"]:
+    """Return only the topmost horizontal rows from a y-sorted span list.
+
+    Groups spans into rows (same y within 8 pt), then returns rows while the
+    gap between consecutive rows is ≤ 10 pt.  This keeps actual x-axis label
+    rows (e.g. month abbreviations on one line, year numbers on the next) while
+    stopping before billing tables or legend text that sit further below.
+    """
+    if not spans:
+        return []
+
+    rows: list[list["TextSpan"]] = [[spans[0]]]
+    for s in spans[1:]:
+        if s.y_center - rows[-1][-1].y_center < 8:
+            rows[-1].append(s)
+        else:
+            rows.append([s])
+
+    result = list(rows[0])
+    for i in range(1, len(rows)):
+        prev_max_y = max(s.y_center for s in rows[i - 1])
+        curr_min_y = min(s.y_center for s in rows[i])
+        if curr_min_y - prev_max_y <= 10:
+            result.extend(rows[i])
+        else:
+            break
+    return result
+
+
 def nearest_x_label(x: float, labels: list[str], x_domain: fitz.Rect) -> str:
     """Map an x coordinate to the nearest categorical label by position.
 

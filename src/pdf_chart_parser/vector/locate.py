@@ -12,7 +12,7 @@ from pdf_chart_parser.vector.color import (
     quantize_color,
 )
 from pdf_chart_parser.vector.drawings import RectItem, StrokedPath
-from pdf_chart_parser.vector.text import TextSpan
+from pdf_chart_parser.vector.text import TextSpan, collect_axis_label_rows
 
 # Minimum bars to consider a valid bar group
 MIN_BARS = 4
@@ -34,7 +34,8 @@ def locate_chart(
     rects: list[RectItem] = drawings["rects"]
     paths: list[StrokedPath] = drawings["paths"]
 
-    bar_groups = _find_bar_groups(rects)
+    bar_candidates = _collect_bar_candidates(rects)
+    bar_groups = _find_bar_groups(bar_candidates)
     line_series = _find_line_series(paths, spans)
 
     # Apply hint filtering
@@ -46,40 +47,43 @@ def locate_chart(
     if not bar_groups and not line_series:
         return None
 
-    # Pick best candidate
-    best_bars = _best_bar_group(bar_groups, spans)
-    best_lines = _best_line_series(line_series, best_bars)
+    # Pick best candidate and collect all bars belonging to that chart
+    # (including any upper series in a stacked chart).
+    all_chart_bars = _collect_chart_bar_groups(bar_groups, bar_candidates, spans)
+    best_lines = _best_line_series(line_series, all_chart_bars)
 
-    if best_bars is None and not best_lines:
+    if all_chart_bars is None and not best_lines:
         return None
 
     # Classify
-    if best_bars is not None and best_lines:
+    if all_chart_bars is not None and best_lines:
         detected_type = "hybrid"
-    elif best_bars is not None:
+    elif all_chart_bars is not None:
         detected_type = "bar"
     else:
         detected_type = "line"
 
     # Compute tight plot_rect (bars/lines only) and expanded chart_rect (with labels)
-    plot_rect = _plot_rect(best_bars or [], best_lines)
-    chart_rect = _compute_chart_rect(best_bars or [], best_lines, spans)
-    return chart_rect, detected_type, best_bars or [], best_lines, plot_rect
+    plot_rect = _plot_rect(all_chart_bars or [], best_lines)
+    chart_rect = _compute_chart_rect(all_chart_bars or [], best_lines, spans)
+    return chart_rect, detected_type, all_chart_bars or [], best_lines, plot_rect
 
 
-def _find_bar_groups(rects: list[RectItem]) -> list[list[RectItem]]:
-    """Group fill rectangles into candidate bar groups."""
-    # Only filled rects with significant height
-    candidates = [
+def _collect_bar_candidates(rects: list[RectItem]) -> list[RectItem]:
+    """Return all rect candidates that could be chart bars (pre-filter by shape and fill)."""
+    return [
         r
         for r in rects
         if r.fill is not None
-        and color_saturation(r.fill) > 0.05  # not white/near-white
+        and (color_saturation(r.fill) > 0.05 or color_lightness(r.fill) < 0.95)
         and r.rect.height > 5
         and r.rect.width > 2
         and r.rect.height > r.rect.width * 0.5  # taller than wide (bars are vertical)
     ]
 
+
+def _find_bar_groups(candidates: list[RectItem]) -> list[list[RectItem]]:
+    """Group bar candidates into baseline-consistent series groups."""
     if not candidates:
         return []
 
@@ -135,9 +139,51 @@ def _find_bar_groups(rects: list[RectItem]) -> list[list[RectItem]]:
                 ):
                     group.append(c)
                     absorbed.add(id(c))
-                    break
 
     return valid_groups
+
+
+def _find_stacked_above(
+    primary: list[RectItem],
+    candidates: list[RectItem],
+) -> list[RectItem]:
+    """Return bars that sit directly on top of the primary group (stacked chart).
+
+    Searches ALL candidates (not just leftovers) so it can find upper-series bars
+    that may already form a partial baseline-consistent group on their own.  The
+    caller is responsible for de-duplicating before further processing.
+
+    Matches candidates whose x0 aligns with a primary bar and whose y1 is close
+    to that primary bar's y0 (the top of the lower-series bar).
+    """
+    primary_by_x0: dict[float, RectItem] = {}
+    for r in primary:
+        key = round(r.rect.x0, 0)
+        primary_by_x0[key] = r
+
+    avg_w = sum(r.rect.width for r in primary) / len(primary)
+    stacked: list[RectItem] = []
+    seen: set[int] = set()
+
+    for c in candidates:
+        if id(c) in seen:
+            continue
+        if abs(c.rect.width - avg_w) > avg_w * 0.5:
+            continue
+        key = round(c.rect.x0, 0)
+        match = primary_by_x0.get(key)
+        if match is None:
+            for pk, pv in primary_by_x0.items():
+                if abs(key - pk) <= 2:
+                    match = pv
+                    break
+        if match is None:
+            continue
+        if abs(c.rect.y1 - match.rect.y0) < 8:
+            stacked.append(c)
+            seen.add(id(c))
+
+    return stacked if len(stacked) >= MIN_BARS else []
 
 
 def _find_line_series(paths: list[StrokedPath], spans: list[TextSpan]) -> list[list[StrokedPath]]:
@@ -196,6 +242,50 @@ def _is_axis_or_gridline(path: StrokedPath) -> bool:
     return False
 
 
+def _collect_chart_bar_groups(
+    groups: list[list[RectItem]],
+    candidates: list[RectItem],
+    spans: list[TextSpan],
+) -> list[RectItem] | None:
+    """Return all bars belonging to the primary chart as a deduplicated flat list.
+
+    1. Selects the highest-scoring group as the primary.
+    2. Searches all candidates for bars stacked directly on top of primary bars
+       (upper series in a stacked chart).
+    3. Adds any other validated groups that spatially overlap with the primary
+       (e.g. a second series at the same x range).
+    4. Deduplicates by bar identity before returning.
+    """
+    if not groups:
+        return None
+    primary = _best_bar_group(groups, spans)
+    if primary is None:
+        return None
+
+    primary_bbox = _rects_bbox(primary)
+    seen: set[int] = {id(r) for r in primary}
+    all_bars: list[RectItem] = list(primary)
+
+    # Add stacked bars (upper series sitting on top of primary bars)
+    stacked = _find_stacked_above(primary, candidates)
+    for r in stacked:
+        if id(r) not in seen:
+            all_bars.append(r)
+            seen.add(id(r))
+
+    # Add any other validated groups whose spatial extent overlaps primary
+    for group in groups:
+        group_bbox = _rects_bbox(group)
+        if not _rects_overlap(group_bbox, primary_bbox, margin=5):
+            continue
+        for r in group:
+            if id(r) not in seen:
+                all_bars.append(r)
+                seen.add(id(r))
+
+    return all_bars
+
+
 def _best_bar_group(groups: list[list[RectItem]], spans: list[TextSpan]) -> list[RectItem] | None:
     if not groups:
         return None
@@ -232,8 +322,9 @@ def _score_bar_group(group: list[RectItem], spans: list[TextSpan]) -> float:
     }
     month_score = sum(1 for s in below if s.text.strip().lower()[:3] in month_keywords)
     unit_keywords = {"kwh", "$", "dollar", "kw", "usage"}
+    bbox_y_center = (bbox.y0 + bbox.y1) / 2
     left = [
-        s for s in spans if s.bbox[2] < bbox.x0 and abs(s.y_center - bbox.y_center) < bbox.height
+        s for s in spans if s.bbox[2] < bbox.x0 and abs(s.y_center - bbox_y_center) < bbox.height
     ]
     unit_score = sum(1 for s in left if any(u in s.text.lower() for u in unit_keywords))
     return month_score + unit_score * 2 + len(group) * 0.1
@@ -311,12 +402,34 @@ def _compute_chart_rect(
         core.x1 + 20,           # right: minimal padding
         core.y1 + bottom_margin,
     )
+    # Collect all in-range spans, separating those above vs below the data area.
+    above_spans: list[TextSpan] = []
+    below_spans: list[TextSpan] = []
+    for s in spans:
+        if not (search.x0 <= s.x_center <= search.x1 and search.y0 <= s.y_center <= search.y1):
+            continue
+        if s.y_center > core.y1:
+            below_spans.append(s)
+        else:
+            above_spans.append(s)
+
+    below_spans.sort(key=lambda s: s.y_center)
+
+    # For BAR charts: restrict below-bar span expansion to the topmost axis-label
+    # rows only.  This prevents billing tables, addresses, and other text just
+    # below the x-axis from enlarging the chart_rect and appearing in annotations.
+    # For LINE charts the x-axis labels often sit far below the data; skip the
+    # row-filter so chart_rect expands to reach them (bottom_margin=250 handles this).
+    if bar_rects:
+        label_spans = collect_axis_label_rows(below_spans)
+    else:
+        label_spans = below_spans
+
     nearby_x: list[float] = []
     nearby_y: list[float] = []
-    for s in spans:
-        if search.x0 <= s.x_center <= search.x1 and search.y0 <= s.y_center <= search.y1:
-            nearby_x += [s.bbox[0], s.bbox[2]]
-            nearby_y += [s.bbox[1], s.bbox[3]]
+    for s in above_spans + label_spans:
+        nearby_x += [s.bbox[0], s.bbox[2]]
+        nearby_y += [s.bbox[1], s.bbox[3]]
 
     all_x = [core.x0, core.x1] + nearby_x
     all_y = [core.y0, core.y1] + nearby_y

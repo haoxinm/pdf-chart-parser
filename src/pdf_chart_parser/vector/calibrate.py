@@ -181,6 +181,13 @@ def _calibrate_y_axis(
         if u:
             unit = u
 
+    # Remove calendar-year-like values (1900–2200) when other scale values exist.
+    # Year labels on the x-axis can bleed into the left-side search area and corrupt
+    # the linear fit with a wildly out-of-range point.
+    pairs_no_years = [(v, y) for v, y in pairs if not (1900 <= v <= 2200)]
+    if len(pairs_no_years) >= 2:
+        pairs = pairs_no_years
+
     if len(pairs) < 2:
         return None, unit, warnings
 
@@ -228,6 +235,7 @@ def _calibrate_x_axis(
         if s.bbox[1] >= by1 - 5
         and s.y_center <= chart_rect.y1 + 10
         and bx0 - 20 <= s.x_center <= bx1 + 20
+        and len(s.text.strip()) <= 15  # coarse filter: drop obvious billing-table text
     ]
     below.sort(key=lambda s: s.x_center)
     labels = [s.text.strip() for s in below if s.text.strip()]
