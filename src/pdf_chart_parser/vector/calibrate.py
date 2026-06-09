@@ -219,12 +219,14 @@ def _calibrate_x_axis(
     bx1 = bounds.x1 if bounds else chart_rect.x1
     by1 = bounds.y1 if bounds else chart_rect.y1
 
-    # X-axis labels sit just below the plot baseline; cap the search at 60 pt to
-    # avoid capturing text from unrelated sections further down the page.
-    _MAX_BELOW = 60
+    # Lower bound: label top edge must be at or below the plot baseline (5 pt tolerance).
+    # Upper bound: use chart_rect.y1 rather than bounds.y1, because for line charts
+    # the plot bottom (bounds.y1) can sit far above the axis baseline where labels live.
+    # chart_rect already encompasses the full axis-label region by construction.
     below = [
         s for s in spans
-        if by1 - 10 <= s.y_center <= by1 + _MAX_BELOW
+        if s.bbox[1] >= by1 - 5
+        and s.y_center <= chart_rect.y1 + 10
         and bx0 - 20 <= s.x_center <= bx1 + 20
     ]
     below.sort(key=lambda s: s.x_center)

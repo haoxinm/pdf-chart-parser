@@ -301,11 +301,15 @@ def _compute_chart_rect(
 
     # Use directional margins: generous left/bottom for axis labels, small top/right
     # to avoid pulling in table headers or other content above/beside the chart.
+    # For bar charts the baseline coincides with plot_rect.y1, so 55 pt reaches
+    # the x-axis labels.  For line charts the data floats above the axis baseline,
+    # so use a much larger bottom margin to capture the labels below the frame.
+    bottom_margin = 55 if bar_rects else 250
     search = fitz.Rect(
-        core.x0 - 70,  # left: room for y-axis value labels
-        core.y0 - 20,  # top: minimal clearance above bars
-        core.x1 + 20,  # right: minimal padding
-        core.y1 + 55,  # bottom: room for x-axis category labels
+        core.x0 - 70,           # left: room for y-axis value labels
+        core.y0 - 20,           # top: minimal clearance above bars
+        core.x1 + 20,           # right: minimal padding
+        core.y1 + bottom_margin,
     )
     nearby_x: list[float] = []
     nearby_y: list[float] = []
