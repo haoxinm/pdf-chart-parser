@@ -1,7 +1,7 @@
 """Generate synthetic born-digital PDFs for testing.
 
 Run: uv run python tests/fixtures/generate_synthetic.py
-Produces: tests/fixtures/pdfs/*.pdf and tests/fixtures/expected/*.json
+Produces: tests/fixtures/pdfs/synthetic/*.pdf and tests/fixtures/expected/synthetic/*.json
 """
 
 from __future__ import annotations
@@ -10,8 +10,8 @@ import json
 from pathlib import Path
 
 FIXTURES_DIR = Path(__file__).parent
-PDFS_DIR = FIXTURES_DIR / "pdfs"
-EXPECTED_DIR = FIXTURES_DIR / "expected"
+PDFS_DIR = FIXTURES_DIR / "pdfs" / "synthetic"
+EXPECTED_DIR = FIXTURES_DIR / "expected" / "synthetic"
 
 MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]
 
@@ -326,9 +326,9 @@ def main() -> None:
     EXPECTED_DIR.mkdir(parents=True, exist_ok=True)
 
     print("Generating synthetic bar chart PDF...")
-    _make_bar_pdf(PDFS_DIR / "synthetic_bar.pdf")
+    _make_bar_pdf(PDFS_DIR / "bar.pdf")
     generate_expected(
-        "synthetic_bar",
+        "bar",
         "bar",
         [
             {
@@ -340,9 +340,9 @@ def main() -> None:
     )
 
     print("Generating synthetic line chart PDF...")
-    _make_line_pdf(PDFS_DIR / "synthetic_line.pdf")
+    _make_line_pdf(PDFS_DIR / "line.pdf")
     generate_expected(
-        "synthetic_line",
+        "line",
         "line",
         [
             {
@@ -354,9 +354,9 @@ def main() -> None:
     )
 
     print("Generating synthetic hybrid chart PDF...")
-    _make_hybrid_pdf(PDFS_DIR / "synthetic_hybrid.pdf")
+    _make_hybrid_pdf(PDFS_DIR / "hybrid.pdf")
     generate_expected(
-        "synthetic_hybrid",
+        "hybrid",
         "hybrid",
         [
             {
@@ -373,9 +373,12 @@ def main() -> None:
     )
 
     print("Generating rasterized (scanned) bar chart PDF...")
-    _make_raster_pdf(PDFS_DIR / "synthetic_bar_raster.pdf", PDFS_DIR / "synthetic_bar.pdf")
+    _make_raster_pdf(PDFS_DIR / "bar_raster.pdf", PDFS_DIR / "bar.pdf")
     # No expected for raster — pixel-space values are not calibrated without OCR
-    print("Done. Synthetic fixtures written to tests/fixtures/pdfs/ and tests/fixtures/expected/")
+    print(
+        "Done. Synthetic fixtures written to "
+        "tests/fixtures/pdfs/synthetic/ and tests/fixtures/expected/synthetic/"
+    )
 
 
 if __name__ == "__main__":

@@ -7,6 +7,8 @@ from typing import Literal
 
 from mcp.server.fastmcp import FastMCP, Image
 
+from pdf_chart_parser.pipeline import extract_usage_chart as _run_pipeline
+
 mcp = FastMCP(
     "usage-chart-extractor",
     host=os.getenv("HOST", "0.0.0.0"),
@@ -32,9 +34,7 @@ def extract_usage_chart(
 
     Provide exactly one of pdf_path, pdf_base64, or pdf_url.
     """
-    from pdf_chart_parser.pipeline import extract_usage_chart as run_pipeline
-
-    result = run_pipeline(
+    result = _run_pipeline(
         pdf_path=pdf_path,
         pdf_base64=pdf_base64,
         pdf_url=pdf_url,

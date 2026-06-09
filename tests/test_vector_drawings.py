@@ -11,7 +11,7 @@ def _make_page_with_bar_chart() -> fitz.Page:
     """Helper: open the synthetic bar PDF and return its first page."""
     from pathlib import Path
 
-    pdf_path = Path(__file__).parent / "fixtures" / "pdfs" / "synthetic_bar.pdf"
+    pdf_path = Path(__file__).parent / "fixtures" / "pdfs" / "synthetic" / "bar.pdf"
     doc = fitz.open(str(pdf_path))
     return doc[0]
 
@@ -42,7 +42,7 @@ def test_rect_items_have_valid_fields():
 def test_stroked_paths_have_points():
     from pathlib import Path
 
-    pdf_path = Path(__file__).parent / "fixtures" / "pdfs" / "synthetic_line.pdf"
+    pdf_path = Path(__file__).parent / "fixtures" / "pdfs" / "synthetic" / "line.pdf"
     doc = fitz.open(str(pdf_path))
     page = doc[0]
     result = collect_drawings(page)

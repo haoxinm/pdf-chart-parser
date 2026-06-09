@@ -117,17 +117,19 @@ def main() -> int:
 
     OUTPUT_DIR.mkdir(exist_ok=True)
 
-    pdfs = sorted(PDFS_DIR.glob("*.pdf"))
+    pdfs = sorted(PDFS_DIR.rglob("*.pdf"))
     if not pdfs:
-        print("No PDFs found in tests/fixtures/pdfs/ — run generate_synthetic.py first.")
+        print("No PDFs found under tests/fixtures/pdfs/ — run generate_synthetic.py first.")
         return 1
 
     rows: list[tuple[str, str, str]] = []
     overall_pass = True
 
     for pdf in pdfs:
-        stem = pdf.stem
-        print(f"  Processing {pdf.name}...")
+        # Preserve relative path structure for output naming (e.g. "synthetic/bar")
+        rel = pdf.relative_to(PDFS_DIR)
+        out_stem = str(rel.with_suffix("")).replace("/", "_")
+        print(f"  Processing {rel}...")
 
         if args.http:
             result = run_over_http(pdf, args.http)
@@ -136,17 +138,17 @@ def main() -> int:
 
         # Write JSON output
         png: bytes | None = result.pop("annotated_png", None)
-        (OUTPUT_DIR / f"{stem}.json").write_text(json.dumps(result, indent=2))
+        (OUTPUT_DIR / f"{out_stem}.json").write_text(json.dumps(result, indent=2))
 
         # Write annotated PNG
         if png:
-            (OUTPUT_DIR / f"{stem}.annotated.png").write_bytes(png)
+            (OUTPUT_DIR / f"{out_stem}.annotated.png").write_bytes(png)
 
-        # Compare against expected if it exists
-        expected_path = EXPECTED_DIR / f"{stem}.json"
+        # Mirror relative path structure to find expected file
+        expected_path = EXPECTED_DIR / rel.parent / f"{pdf.stem}.json"
         if expected_path.exists():
             expected = json.loads(expected_path.read_text())
-            ok, errors = compare(result, expected, stem)
+            ok, errors = compare(result, expected, out_stem)
             status = "PASS" if ok else "FAIL"
             if not ok:
                 overall_pass = False
@@ -157,7 +159,7 @@ def main() -> int:
 
         method = result.get("method", "?")
         chart_type = result.get("chart_type", "?")
-        rows.append((pdf.name, f"{method}/{chart_type}", status))
+        rows.append((str(rel), f"{method}/{chart_type}", status))
 
     # Print summary table
     print()

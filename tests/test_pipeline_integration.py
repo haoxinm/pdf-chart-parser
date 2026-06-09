@@ -73,16 +73,16 @@ def test_r_squared_acceptable(synthetic_bar_pdf):
 
 
 def test_all_fixture_pdfs_run_without_crash():
-    """Smoke test: every PDF in the fixtures dir should not raise."""
-    for pdf in sorted(PDFS_DIR.glob("*.pdf")):
+    """Smoke test: every PDF under fixtures/pdfs (including subdirs) should not raise."""
+    for pdf in sorted(PDFS_DIR.rglob("*.pdf")):
         result = extract_usage_chart(pdf_path=str(pdf), return_annotated_image=False)
         assert "chart_found" in result
         assert "method" in result
 
 
 def test_real_bills_if_present():
-    """If real bill PDFs are placed in fixtures/pdfs, test them against expected/*.json."""
-    real_bills = [p for p in PDFS_DIR.glob("*.pdf") if not p.stem.startswith("synthetic")]
+    """If real bill PDFs are placed in fixtures/pdfs (top level), test against expected/*.json."""
+    real_bills = list(PDFS_DIR.glob("*.pdf"))  # top-level only; synthetic/ is a subdir
     for pdf in real_bills:
         expected_path = EXPECTED_DIR / f"{pdf.stem}.json"
         result = extract_usage_chart(pdf_path=str(pdf), return_annotated_image=False)

@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import typer
+
+from pdf_chart_parser.pipeline import extract_usage_chart
+from pdf_chart_parser.server import mcp
 
 app = typer.Typer(help="Extract energy-usage charts from utility-bill PDFs.")
 
@@ -22,8 +26,6 @@ def extract(
     image_out: Path | None = typer.Option(None, "--image-out", help="Write annotated PNG to file"),
 ) -> None:
     """Extract chart data from a PDF and print JSON to stdout."""
-    from pdf_chart_parser.pipeline import extract_usage_chart
-
     result = extract_usage_chart(
         pdf_path=pdf_path,
         page=page,
@@ -54,14 +56,9 @@ def serve(
     port: int = typer.Option(8000, "--port"),
 ) -> None:
     """Start the MCP server."""
-    import os
-
     os.environ["MCP_TRANSPORT"] = transport
     os.environ["HOST"] = host
     os.environ["PORT"] = str(port)
-
-    from pdf_chart_parser.server import mcp
-
     mcp.run(transport=transport)
 
 

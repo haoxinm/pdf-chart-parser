@@ -4,6 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
+import fitz
+import numpy as np
+
+from pdf_chart_parser.models import Axes, AxisCalibration, AxisInfo, DataPoint, Series
+from pdf_chart_parser.raster.ocr import ocr_axis_labels
+
 
 def extract_raster(
     doc: Any,
@@ -17,12 +23,9 @@ def extract_raster(
     """Run OpenCV-based chart extraction as a fallback.
 
     Requires the [raster] extra: opencv-python-headless + pytesseract.
+    cv2 is imported inside the function because it is an optional dependency.
     """
     import cv2
-    import fitz
-    import numpy as np
-
-    from pdf_chart_parser.raster.ocr import ocr_axis_labels
 
     page = doc[page_index]
     zoom = render_dpi / 72.0
@@ -38,7 +41,6 @@ def extract_raster(
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     _, th = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
 
-    # Detect bars via contours
     cnts, _ = cv2.findContours(th, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     bar_candidates = []
     for c in cnts:
@@ -50,17 +52,13 @@ def extract_raster(
         warnings.append("raster: no bar candidates found")
         return _failed(warnings)
 
-    # Sort by x
     bar_candidates.sort(key=lambda b: b[0])
 
-    # OCR axis labels
     h_img, w_img = img.shape[:2]
     bottom_strip = img[h_img * 7 // 8 :, :]
     bottom_labels = ocr_axis_labels(bottom_strip)
 
     warnings.append("raster fallback used; accuracy may be lower than vector path")
-
-    from pdf_chart_parser.models import Axes, AxisCalibration, AxisInfo, DataPoint, Series
 
     baseline_y = max(b[1] + b[3] for b in bar_candidates)
     series_points = []
