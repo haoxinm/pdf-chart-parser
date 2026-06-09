@@ -71,6 +71,18 @@ def collect_drawings(page: fitz.Page) -> dict[str, list]:
             for p in pts[1:]:
                 if abs(p.x - deduped[-1].x) > 0.01 or abs(p.y - deduped[-1].y) > 0.01:
                     deduped.append(p)
+
+            # If the path has a fill and its points form an axis-aligned rectangle,
+            # treat it as a RectItem so bar-group detection can find it.  This handles
+            # PDFs that draw bars via four explicit line segments instead of a 're' item.
+            if fill is not None:
+                rect = _path_to_rect(deduped)
+                if rect is not None:
+                    rects.append(
+                        RectItem(rect=rect, fill=fill, stroke=stroke, width=width, seqno=seqno)
+                    )
+                    continue
+
             paths.append(
                 StrokedPath(
                     points=deduped,
@@ -84,6 +96,26 @@ def collect_drawings(page: fitz.Page) -> dict[str, list]:
             )
 
     return {"rects": rects, "paths": paths}
+
+
+def _path_to_rect(points: list[fitz.Point]) -> fitz.Rect | None:
+    """If the point set forms an axis-aligned rectangle, return the bounding fitz.Rect.
+
+    Accepts a closing duplicate point (e.g. the start point repeated at the end)
+    so paths drawn as four 'l' segments pass correctly.
+    """
+    unique = {(round(p.x, 1), round(p.y, 1)) for p in points}
+    if len(unique) != 4:
+        return None
+    xs = {u[0] for u in unique}
+    ys = {u[1] for u in unique}
+    if len(xs) != 2 or len(ys) != 2:
+        return None
+    x0, x1 = min(xs), max(xs)
+    y0, y1 = min(ys), max(ys)
+    if x1 - x0 < 0.01 or y1 - y0 < 0.01:
+        return None
+    return fitz.Rect(x0, y0, x1, y1)
 
 
 def _to_tuple(color: Any) -> tuple[float, ...] | None:
