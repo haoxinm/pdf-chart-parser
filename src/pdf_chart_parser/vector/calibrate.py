@@ -377,16 +377,14 @@ def _calibrate_x_axis(
     if not cands:
         return AxisInfo(kind="categorical", labels=[]), []
 
-    labels = _build_x_labels(cands, plot_w)
+    labels, positions = _build_x_labels(cands, plot_w)
     if not labels:
         return AxisInfo(kind="categorical", labels=[]), []
 
     # Determine categorical vs numeric
     numeric_count = sum(1 for lbl in labels if _parse_number(lbl) is not None)
-    if numeric_count > len(labels) * 0.7:
-        return AxisInfo(kind="numeric", labels=labels), []
-
-    return AxisInfo(kind="categorical", labels=labels), []
+    kind = "numeric" if numeric_count > len(labels) * 0.7 else "categorical"
+    return AxisInfo(kind=kind, labels=labels, positions=positions), []
 
 
 def _group_rows(spans: list[TextSpan], y_tol: float = 5.0) -> list[list[TextSpan]]:
@@ -400,7 +398,7 @@ def _group_rows(spans: list[TextSpan], y_tol: float = 5.0) -> list[list[TextSpan
     return rows
 
 
-def _build_x_labels(cands: list[TextSpan], plot_w: float) -> list[str]:
+def _build_x_labels(cands: list[TextSpan], plot_w: float) -> tuple[list[str], list[float]]:
     """Derive ordered x-axis labels from candidate spans below the baseline.
 
     The label row is the one nearest below the plot baseline that spreads across
@@ -444,12 +442,14 @@ def _build_x_labels(cands: list[TextSpan], plot_w: float) -> list[str]:
             columns[nearest].append(s)
 
     labels: list[str] = []
+    positions: list[float] = []
     for col in columns:
         col.sort(key=lambda s: (s.y_center, s.x_center))
         text = " ".join(s.text.strip() for s in col if s.text.strip())
         if text:
             labels.append(text)
-    return labels
+            positions.append(sum(s.x_center for s in col) / len(col))
+    return labels, positions
 
 
 def _resolve_unit(detected: str | None, hint: str) -> str:

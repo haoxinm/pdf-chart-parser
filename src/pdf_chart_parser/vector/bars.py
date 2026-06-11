@@ -112,7 +112,7 @@ def extract_bars(
                 warnings.append(f"negative bar value {value:.2f} at index {i}; clipping to 0")
                 value = 0.0
 
-            x_label = nearest_x_label(x_center, x_labels, x_domain)
+            x_label = nearest_x_label(x_center, x_labels, x_domain, axes.x.positions)
             bar_conf = _bar_confidence(bar, group_bars, axes, baseline_y)
             points.append(
                 DataPoint(

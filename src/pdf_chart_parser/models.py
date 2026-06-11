@@ -15,6 +15,9 @@ class AxisCalibrationPoint(BaseModel):
 class AxisInfo(BaseModel):
     kind: Literal["categorical", "numeric"] = "categorical"
     labels: list[str] = Field(default_factory=list)
+    # x-center of each label, left to right; parallel to `labels`. Lets data
+    # points map to the nearest label by position rather than even spacing.
+    positions: list[float] = Field(default_factory=list)
 
 
 class AxisCalibration(BaseModel):
