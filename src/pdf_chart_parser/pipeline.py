@@ -157,13 +157,13 @@ def _try_vector(
 
         chart_rect, detected_type, bar_rects, line_paths, plot_rect = location
         axes, calibration_warnings = calibrate_axes(
-            spans, chart_rect, value_unit_hint, plot_rect=plot_rect
+            spans, chart_rect, value_unit_hint, plot_rect=plot_rect, bar_rects=bar_rects
         )
         warnings.extend(calibration_warnings)
 
         series = []
         if bar_rects:
-            bar_series, bar_warnings = extract_bars(bar_rects, axes, chart_rect)
+            bar_series, bar_warnings = extract_bars(bar_rects, axes, chart_rect, spans)
             warnings.extend(bar_warnings)
             series.extend(bar_series)
 
