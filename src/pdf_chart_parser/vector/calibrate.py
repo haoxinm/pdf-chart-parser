@@ -437,8 +437,15 @@ def _build_x_labels(cands: list[TextSpan], plot_w: float) -> tuple[list[str], li
     def qualifies(row: list[TextSpan]) -> bool:
         return len(row) >= 2 and coverage(row) >= 0.3
 
-    primary_idx = next((i for i, r in enumerate(rows) if qualifies(r)), None)
-    if primary_idx is None:
+    # Among the label rows just below the axis, the category row is the richest
+    # one — a band of "0" axis end-labels can also span the plot but holds only
+    # the two corner values, so entry count, not mere coverage, picks the row.
+    qualifying = [i for i, r in enumerate(rows) if qualifies(r)]
+    if qualifying:
+        top_y = min(min(s.y_center for s in rows[i]) for i in qualifying)
+        near = [i for i in qualifying if min(s.y_center for s in rows[i]) - top_y <= 25]
+        primary_idx = max(near, key=lambda i: len(rows[i]))
+    else:
         primary_idx = max(range(len(rows)), key=lambda i: coverage(rows[i]))
 
     primary = sorted(rows[primary_idx], key=lambda s: s.x_center)
