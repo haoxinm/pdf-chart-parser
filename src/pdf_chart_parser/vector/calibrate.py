@@ -225,21 +225,24 @@ def _calibrate_x_axis(
     bx0 = bounds.x0 if bounds else chart_rect.x0
     bx1 = bounds.x1 if bounds else chart_rect.x1
     by1 = bounds.y1 if bounds else chart_rect.y1
+    plot_w = max(bx1 - bx0, 1.0)
 
-    # Lower bound: label top edge must be at or below the plot baseline (5 pt tolerance).
-    # Upper bound: use chart_rect.y1 rather than bounds.y1, because for line charts
-    # the plot bottom (bounds.y1) can sit far above the axis baseline where labels live.
-    # chart_rect already encompasses the full axis-label region by construction.
-    below = [
-        s for s in spans
+    # Candidate spans: at or below the plot baseline and within the chart rect.
+    # The horizontal bound is the (label-expanded) chart rect rather than the
+    # tight plot bounds, because outermost x-labels often overhang the data and,
+    # for line charts, the label row can be wider than the polyline's bbox.
+    cands = [
+        s
+        for s in spans
         if s.bbox[1] >= by1 - 5
         and s.y_center <= chart_rect.y1 + 10
-        and bx0 - 20 <= s.x_center <= bx1 + 20
-        and len(s.text.strip()) <= 15  # coarse filter: drop obvious billing-table text
+        and chart_rect.x0 - 5 <= s.x_center <= chart_rect.x1 + 5
+        and s.text.strip()
     ]
-    below.sort(key=lambda s: s.x_center)
-    labels = [s.text.strip() for s in below if s.text.strip()]
+    if not cands:
+        return AxisInfo(kind="categorical", labels=[]), []
 
+    labels = _build_x_labels(cands, plot_w)
     if not labels:
         return AxisInfo(kind="categorical", labels=[]), []
 
@@ -249,6 +252,69 @@ def _calibrate_x_axis(
         return AxisInfo(kind="numeric", labels=labels), []
 
     return AxisInfo(kind="categorical", labels=labels), []
+
+
+def _group_rows(spans: list[TextSpan], y_tol: float = 5.0) -> list[list[TextSpan]]:
+    """Cluster spans into horizontal rows by y-center proximity."""
+    rows: list[list[TextSpan]] = []
+    for s in sorted(spans, key=lambda s: s.y_center):
+        if rows and s.y_center - rows[-1][-1].y_center <= y_tol:
+            rows[-1].append(s)
+        else:
+            rows.append([s])
+    return rows
+
+
+def _build_x_labels(cands: list[TextSpan], plot_w: float) -> list[str]:
+    """Derive ordered x-axis labels from candidate spans below the baseline.
+
+    The label row is the one nearest below the plot baseline that spreads across
+    the plot with several entries; its spans define one column each (left to
+    right).  Genuine two-line labels (a month row above a year row, or the two
+    lines of a "dal …"/"al …" date range) are kept by absorbing a directly
+    adjacent lower row only when it has about the same number of entries — one
+    per column.  Stray content (temperature readouts, "<"/"=" markers, billing
+    tables) differs in count or sits below a larger vertical gap, so it is
+    dropped instead of polluting the label list.
+    """
+    rows = _group_rows(cands)
+
+    def coverage(row: list[TextSpan]) -> float:
+        xs = [s.x_center for s in row]
+        return (max(xs) - min(xs)) / plot_w
+
+    def qualifies(row: list[TextSpan]) -> bool:
+        return len(row) >= 2 and coverage(row) >= 0.3
+
+    primary_idx = next((i for i, r in enumerate(rows) if qualifies(r)), None)
+    if primary_idx is None:
+        primary_idx = max(range(len(rows)), key=lambda i: coverage(rows[i]))
+
+    primary = sorted(rows[primary_idx], key=lambda s: s.x_center)
+
+    # Each primary-row span is a column; lower rows attach to their nearest column.
+    columns: list[list[TextSpan]] = [[s] for s in primary]
+    column_x = [s.x_center for s in primary]
+
+    for i in range(primary_idx + 1, len(rows)):
+        prev_y = max(s.y_center for s in rows[i - 1])
+        curr_y = min(s.y_center for s in rows[i])
+        if curr_y - prev_y > 12:
+            break
+        # A true second label line has roughly one entry per column.
+        if not (len(primary) * 0.7 <= len(rows[i]) <= len(primary) * 1.3):
+            break
+        for s in rows[i]:
+            nearest = min(range(len(column_x)), key=lambda c: abs(column_x[c] - s.x_center))
+            columns[nearest].append(s)
+
+    labels: list[str] = []
+    for col in columns:
+        col.sort(key=lambda s: (s.y_center, s.x_center))
+        text = " ".join(s.text.strip() for s in col if s.text.strip())
+        if text:
+            labels.append(text)
+    return labels
 
 
 def _resolve_unit(detected: str | None, hint: str) -> str:
