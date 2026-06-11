@@ -11,6 +11,7 @@ from pdf_chart_parser.vector.color import (
     color_saturation,
     quantize_color,
 )
+from pdf_chart_parser.vector.calibrate import _parse_number
 from pdf_chart_parser.vector.drawings import RectItem, StrokedPath
 from pdf_chart_parser.vector.text import TextSpan, collect_axis_label_rows
 
@@ -18,6 +19,8 @@ from pdf_chart_parser.vector.text import TextSpan, collect_axis_label_rows
 MIN_BARS = 4
 # Minimum points for a line series to span the plot
 MIN_LINE_POINTS = 4
+# How far left of the data the crop reaches to include a detached value axis.
+_Y_AXIS_LABEL_REACH = 160.0
 
 
 def locate_chart(
@@ -430,6 +433,20 @@ def _compute_chart_rect(
     for s in above_spans + label_spans:
         nearby_x += [s.bbox[0], s.bbox[2]]
         nearby_y += [s.bbox[1], s.bbox[3]]
+
+    # Reach the value axis even when it sits far left of the data (a plot with
+    # leading empty columns). Include numeric labels within the plot's vertical
+    # band up to the axis-strip distance; the vertical-band gate keeps billing
+    # tables below the chart from widening the crop.
+    for s in spans:
+        if (
+            s.bbox[2] <= core.x0 + 5
+            and s.x_center >= core.x0 - _Y_AXIS_LABEL_REACH
+            and core.y0 - 10 <= s.y_center <= core.y1 + 10
+            and _parse_number(s.text) is not None
+        ):
+            nearby_x += [s.bbox[0], s.bbox[2]]
+            nearby_y += [s.bbox[1], s.bbox[3]]
 
     all_x = [core.x0, core.x1] + nearby_x
     all_y = [core.y0, core.y1] + nearby_y
