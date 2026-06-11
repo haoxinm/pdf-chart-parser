@@ -58,3 +58,4 @@ Thumbs.db
 *.csv
 results/
 scripts/process_blobs.sh
+scripts/diagnose.py
