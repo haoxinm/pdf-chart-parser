@@ -39,8 +39,13 @@ _MONTH_NAMES = {
 _NUMBER_RE = re.compile(r"^[+\-]?\$?\s*(\d[\d,\.]*)\s*(k|kwh|kw|mwh|therm)?$", re.I)
 _UNIT_RE = re.compile(r"kwh|kw|mwh|therm|\$", re.I)
 
-# Maximum horizontal distance a tick label can sit from the plot edge.
-_MAX_AXIS_STRIP = 70.0
+# Maximum horizontal distance a tick label can sit from the plot edge. Generous
+# so a value axis with leading empty data columns is still reached; the right
+# column is chosen by fit quality, not proximity.
+_MAX_AXIS_STRIP = 160.0
+# Labels within this horizontal distance (measured at the edge nearest the plot)
+# belong to the same axis column.
+_AXIS_COLUMN_X_TOL = 12.0
 # Minimum vertical span the tick labels must cover to be a real axis.
 _MIN_AXIS_Y_SPREAD = 10.0
 # Minimum linear fit quality for an accepted value axis.
@@ -227,10 +232,11 @@ def _calibrate_y_axis(
     bx0, by0, bx1, by1 = bounds
     _, cy0, _, cy1 = chart_rect
 
+    # Gather numeric labels on the correct side of the plot. The horizontal reach
+    # is generous because the value axis can sit far from the data when the plot
+    # has leading empty columns; the right column is then chosen by fit quality,
+    # not proximity, so distance alone never selects billing-table numbers.
     if side == "left":
-        # Left-side labels sit in a narrow strip just left of the plot. Bounding
-        # the strip (rather than accepting everything left of the axis) keeps
-        # billing-table numbers further left from being mistaken for ticks.
         label_spans = [
             s
             for s in spans
@@ -247,30 +253,32 @@ def _calibrate_y_axis(
             and cy0 - 20 <= s.y_center <= cy1 + 20
         ]
 
-    pairs: list[tuple[float, float]] = []
+    # Cluster on the label edge nearest the plot (right edge for a left axis,
+    # left edge for a right axis) so right-aligned numbers like "1000" and "0"
+    # stay in one column despite differing centers.
+    plot_edge = bx0 if side == "left" else bx1
+    triples: list[tuple[float, float, float]] = []  # (value, y_center, edge)
     unit: str | None = None
     for s in label_spans:
         val = _parse_number(s.text)
         if val is not None:
-            pairs.append((val, s.y_center))
+            edge = s.bbox[2] if side == "left" else s.bbox[0]
+            triples.append((val, s.y_center, edge))
         u = _collect_unit(s.text)
         if u:
             unit = u
 
     # Remove calendar-year-like values (1900–2200) when other scale values exist.
-    # Year labels on the x-axis can bleed into the left-side search area and corrupt
-    # the linear fit with a wildly out-of-range point.
-    pairs_no_years = [(v, y) for v, y in pairs if not (1900 <= v <= 2200)]
-    if len(pairs_no_years) >= 2:
-        pairs = pairs_no_years
+    # Year labels on the x-axis can bleed into the search area and corrupt the fit.
+    no_years = [t for t in triples if not (1900 <= t[0] <= 2200)]
+    if len(no_years) >= 2:
+        triples = no_years
 
-    if len(pairs) < 2:
+    if len(triples) < 2:
         return None, unit, warnings
 
-    # Tick labels must span a real vertical distance; a horizontal row of numbers
-    # (e.g. a value row from an adjacent chart) shares one y and cannot be an axis.
-    y_spread = max(p[1] for p in pairs) - min(p[1] for p in pairs)
-    if y_spread < _MIN_AXIS_Y_SPREAD:
+    pairs = _best_axis_column(triples, plot_edge)
+    if pairs is None:
         return None, unit, warnings
 
     pairs = _reject_outliers(pairs)
@@ -279,20 +287,55 @@ def _calibrate_y_axis(
 
     values = np.array([p[0] for p in pairs])
     ys = np.array([p[1] for p in pairs])
-
-    fit = np.polyfit(ys, values, 1)
-    a, b = float(fit[0]), float(fit[1])
+    a, b = (float(v) for v in np.polyfit(ys, values, 1))
     r2 = _r_squared(values, a * ys + b)
-
-    # A genuine value axis is highly linear; a poor fit means we collected
-    # non-tick numbers, so report the axis as uncalibrated rather than apply a
-    # scale that is wrong for every data point.
     if r2 < _MIN_AXIS_R2:
         return None, unit, warnings
 
     calib_points = [AxisCalibrationPoint(value=v, y=y) for v, y in pairs]
     result = _FitResult(a=a, b=b, r_squared=r2, points=calib_points)
     return result, unit, warnings
+
+
+def _best_axis_column(
+    triples: list[tuple[float, float, float]],
+    plot_edge: float,
+) -> list[tuple[float, float]] | None:
+    """Pick the vertical column of numbers that best forms a linear value axis.
+
+    Tick labels share an edge position, climb monotonically with y, and span a
+    real vertical distance; scattered billing-table numbers do not. Group
+    candidates into columns by their edge coordinate, keep those with enough
+    vertical spread, and choose the one with the best linear fit (nearest the
+    plot breaks ties). Returns the column's (value, y) pairs, or None when no
+    column qualifies.
+    """
+    triples = sorted(triples, key=lambda t: t[2])
+    columns: list[list[tuple[float, float, float]]] = [[triples[0]]]
+    for t in triples[1:]:
+        if t[2] - columns[-1][-1][2] <= _AXIS_COLUMN_X_TOL:
+            columns[-1].append(t)
+        else:
+            columns.append([t])
+
+    best: tuple[float, float] | None = None  # (r2, -distance-to-plot) ranking
+    best_pairs: list[tuple[float, float]] | None = None
+    for col in columns:
+        if len(col) < 2:
+            continue
+        ys_spread = max(c[1] for c in col) - min(c[1] for c in col)
+        if ys_spread < _MIN_AXIS_Y_SPREAD:
+            continue
+        values = np.array([c[0] for c in col])
+        ys = np.array([c[1] for c in col])
+        a, b = (float(v) for v in np.polyfit(ys, values, 1))
+        r2 = _r_squared(values, a * ys + b)
+        mean_edge = sum(c[2] for c in col) / len(col)
+        rank = (round(r2, 4), -abs(mean_edge - plot_edge))  # best fit, then nearest plot
+        if best is None or rank > best:
+            best = rank
+            best_pairs = [(c[0], c[1]) for c in col]
+    return best_pairs
 
 
 def y_to_value(y: float, calibration: AxisCalibration) -> float:
