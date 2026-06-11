@@ -24,7 +24,7 @@ class TextSpan:
         return (self.bbox[1] + self.bbox[3]) / 2
 
 
-def collect_axis_label_rows(spans: list["TextSpan"]) -> list["TextSpan"]:
+def collect_axis_label_rows(spans: list[TextSpan]) -> list[TextSpan]:
     """Return only the topmost horizontal rows from a y-sorted span list.
 
     Groups spans into rows (same y within 8 pt), then returns rows while the
@@ -35,7 +35,7 @@ def collect_axis_label_rows(spans: list["TextSpan"]) -> list["TextSpan"]:
     if not spans:
         return []
 
-    rows: list[list["TextSpan"]] = [[spans[0]]]
+    rows: list[list[TextSpan]] = [[spans[0]]]
     for s in spans[1:]:
         if s.y_center - rows[-1][-1].y_center < 8:
             rows[-1].append(s)
