@@ -50,6 +50,8 @@ _AXIS_COLUMN_X_TOL = 12.0
 _MIN_AXIS_Y_SPREAD = 10.0
 # Minimum linear fit quality for an accepted value axis.
 _MIN_AXIS_R2 = 0.95
+# A tick label snaps to a gridline within this many points of its center.
+_GRIDLINE_SNAP_TOL = 7.0
 
 
 class _FitResult(NamedTuple):
@@ -65,6 +67,7 @@ def calibrate_axes(
     value_unit_hint: str = "auto",
     plot_rect: fitz.Rect | None = None,
     bar_rects: list | None = None,
+    gridline_ys: list[float] | None = None,
 ) -> tuple[Axes, list[str]]:
     """Fit y-axis (primary + optional secondary) and x-axis from text spans.
 
@@ -80,7 +83,8 @@ def calibrate_axes(
     bounds = plot_rect if plot_rect is not None else chart_rect
 
     y_primary, y_unit, y_warnings = _calibrate_y_axis(
-        spans, chart_rect, bounds, side="left", value_unit_hint=value_unit_hint
+        spans, chart_rect, bounds, side="left", value_unit_hint=value_unit_hint,
+        gridline_ys=gridline_ys,
     )
     warnings.extend(y_warnings)
     if y_primary is None:
@@ -92,7 +96,8 @@ def calibrate_axes(
     y_secondary = None
     y_sec_unit = None
     right_fit, r_unit, r_warnings = _calibrate_y_axis(
-        spans, chart_rect, bounds, side="right", value_unit_hint="auto"
+        spans, chart_rect, bounds, side="right", value_unit_hint="auto",
+        gridline_ys=gridline_ys,
     )
     # Require >= 3 points: a 2-point fit is always exact (r² == 1.0), so two
     # stray right-side numbers would otherwise spawn a phantom secondary axis.
@@ -181,6 +186,14 @@ def _collect_unit(text: str) -> str | None:
     return None
 
 
+def _snap_to_gridline(y: float, gridline_ys: list[float] | None) -> float:
+    """Return the gridline y nearest to ``y`` when within tolerance, else ``y``."""
+    if not gridline_ys:
+        return y
+    nearest = min(gridline_ys, key=lambda g: abs(g - y))
+    return nearest if abs(nearest - y) <= _GRIDLINE_SNAP_TOL else y
+
+
 def _r_squared(values: np.ndarray, predicted: np.ndarray) -> float:
     ss_res = float(np.sum((values - predicted) ** 2))
     ss_tot = float(np.sum((values - values.mean()) ** 2))
@@ -226,6 +239,7 @@ def _calibrate_y_axis(
     bounds: fitz.Rect,
     side: str,
     value_unit_hint: str,
+    gridline_ys: list[float] | None = None,
 ) -> tuple[_FitResult | None, str | None, list[str]]:
     warnings: list[str] = []
     # Use bounds (plot rect) for side determination, chart_rect for vertical extent
@@ -263,7 +277,11 @@ def _calibrate_y_axis(
         val = _parse_number(s.text)
         if val is not None:
             edge = s.bbox[2] if side == "left" else s.bbox[0]
-            triples.append((val, s.y_center, edge))
+            # Snap the label's y to the gridline drawn at that value when one sits
+            # within half a line-height; the line is the true tick row, the text
+            # center only an approximation of it.
+            y = _snap_to_gridline(s.y_center, gridline_ys)
+            triples.append((val, y, edge))
         u = _collect_unit(s.text)
         if u:
             unit = u

@@ -14,7 +14,7 @@ from pdf_chart_parser.vector.bars import extract_bars
 from pdf_chart_parser.vector.calibrate import calibrate_axes
 from pdf_chart_parser.vector.drawings import collect_drawings
 from pdf_chart_parser.vector.lines import extract_lines
-from pdf_chart_parser.vector.locate import locate_chart
+from pdf_chart_parser.vector.locate import horizontal_gridline_ys, locate_chart
 from pdf_chart_parser.vector.text import collect_text_spans
 
 
@@ -156,8 +156,14 @@ def _try_vector(
             )
 
         chart_rect, detected_type, bar_rects, line_paths, plot_rect = location
+        gridline_ys = horizontal_gridline_ys(drawings["paths"], plot_rect)
         axes, calibration_warnings = calibrate_axes(
-            spans, chart_rect, value_unit_hint, plot_rect=plot_rect, bar_rects=bar_rects
+            spans,
+            chart_rect,
+            value_unit_hint,
+            plot_rect=plot_rect,
+            bar_rects=bar_rects,
+            gridline_ys=gridline_ys,
         )
         warnings.extend(calibration_warnings)
 

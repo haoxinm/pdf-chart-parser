@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import fitz
 
+from pdf_chart_parser.vector.calibrate import _parse_number
 from pdf_chart_parser.vector.color import (
     COLOR_DIST_THRESHOLD,
     color_distance,
@@ -11,7 +12,6 @@ from pdf_chart_parser.vector.color import (
     color_saturation,
     quantize_color,
 )
-from pdf_chart_parser.vector.calibrate import _parse_number
 from pdf_chart_parser.vector.drawings import RectItem, StrokedPath
 from pdf_chart_parser.vector.text import TextSpan, collect_axis_label_rows
 
@@ -383,6 +383,31 @@ def _plot_rect(bar_rects: list[RectItem], line_paths: list[StrokedPath]) -> fitz
     if not points_x:
         return fitz.Rect(0, 0, 100, 100)
     return fitz.Rect(min(points_x), min(points_y), max(points_x), max(points_y))
+
+
+def horizontal_gridline_ys(
+    paths: list[StrokedPath], plot_rect: fitz.Rect
+) -> list[float]:
+    """Return y-positions of horizontal gridlines spanning the plot.
+
+    These mark true axis-value rows, letting calibration snap tick labels (whose
+    text centers can be a few points off) onto the lines actually drawn at each
+    value.
+    """
+    plot_w = max(plot_rect.x1 - plot_rect.x0, 1.0)
+    ys: list[float] = []
+    for p in paths:
+        if len(p.points) < 2:
+            continue
+        xs = [q.x for q in p.points]
+        pys = [q.y for q in p.points]
+        if (
+            max(pys) - min(pys) < 1.5
+            and (max(xs) - min(xs)) > plot_w * 0.4
+            and plot_rect.y0 - 30 <= pys[0] <= plot_rect.y1 + 30
+        ):
+            ys.append(pys[0])
+    return sorted(set(ys))
 
 
 def _compute_chart_rect(
