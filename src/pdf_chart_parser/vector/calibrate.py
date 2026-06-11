@@ -39,6 +39,13 @@ _MONTH_NAMES = {
 _NUMBER_RE = re.compile(r"^[+\-]?\$?\s*(\d[\d,\.]*)\s*(k|kwh|kw|mwh|therm)?$", re.I)
 _UNIT_RE = re.compile(r"kwh|kw|mwh|therm|\$", re.I)
 
+# Maximum horizontal distance a tick label can sit from the plot edge.
+_MAX_AXIS_STRIP = 70.0
+# Minimum vertical span the tick labels must cover to be a real axis.
+_MIN_AXIS_Y_SPREAD = 10.0
+# Minimum linear fit quality for an accepted value axis.
+_MIN_AXIS_R2 = 0.95
+
 
 class _FitResult(NamedTuple):
     a: float  # scale (value per pixel)
@@ -52,11 +59,14 @@ def calibrate_axes(
     chart_rect: fitz.Rect,
     value_unit_hint: str = "auto",
     plot_rect: fitz.Rect | None = None,
+    bar_rects: list | None = None,
 ) -> tuple[Axes, list[str]]:
     """Fit y-axis (primary + optional secondary) and x-axis from text spans.
 
     plot_rect is the tight bars/lines bbox; chart_rect includes label expansion.
     Uses plot_rect for determining which side labels belong to when provided.
+    bar_rects, when given, lets x-axis labelling skip the numeric value labels
+    printed on the bars of an axis-less chart.
 
     Returns (Axes, warnings).
     """
@@ -86,7 +96,17 @@ def calibrate_axes(
         y_sec_unit = r_unit
         warnings.append("secondary y-axis detected")
 
-    x_axis, x_labels = _calibrate_x_axis(spans, chart_rect, bounds)
+    # When there is no value axis, the numbers printed on the bars are data
+    # values, not x-tick labels; keep them out of the x-axis label search.
+    exclude_ids: set[int] = set()
+    if y_primary is None and bar_rects:
+        from pdf_chart_parser.vector.value_labels import read_bar_value_labels
+
+        exclude_ids = {
+            id(span) for _, span in read_bar_value_labels(bar_rects, spans).values()
+        }
+
+    x_axis, x_labels = _calibrate_x_axis(spans, chart_rect, bounds, exclude_ids=exclude_ids)
 
     scale_pp = abs(y_primary.a) if y_primary else 0.0
     r2 = y_primary.r_squared if y_primary else 0.0
@@ -129,7 +149,15 @@ def _parse_number(text: str) -> float | None:
     m = _NUMBER_RE.match(t)
     if not m:
         return None
-    val = float(m.group(1))
+    digits = m.group(1)
+    # Reject grouped strings that are not real numbers (e.g. phone numbers like
+    # "833.209.5245"), which the digit class would otherwise match.
+    if digits.count(".") > 1:
+        return None
+    try:
+        val = float(digits)
+    except ValueError:
+        return None
     suffix = (m.group(2) or "").lower()
     if suffix == "k":
         val *= 1000
@@ -148,6 +176,45 @@ def _collect_unit(text: str) -> str | None:
     return None
 
 
+def _r_squared(values: np.ndarray, predicted: np.ndarray) -> float:
+    ss_res = float(np.sum((values - predicted) ** 2))
+    ss_tot = float(np.sum((values - values.mean()) ** 2))
+    return 1.0 - ss_res / ss_tot if ss_tot > 1e-9 else 1.0
+
+
+def _reject_outliers(pairs: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    """Drop tick points that don't fit the dominant linear trend.
+
+    Correct gridlines can be interleaved with stray numbers that share the axis
+    strip. Iteratively remove the worst-fitting point while doing so improves
+    the linear fit, keeping at least three points so a genuine 2-point axis is
+    never reduced below a fittable set.
+    """
+    if len(pairs) <= 3:
+        return pairs
+
+    current = list(pairs)
+    while len(current) > 3:
+        ys = np.array([p[1] for p in current])
+        values = np.array([p[0] for p in current])
+        a, b = np.polyfit(ys, values, 1)
+        r2 = _r_squared(values, a * ys + b)
+        if r2 >= 0.999:
+            break
+        # Residual of each point; the largest is the outlier candidate.
+        residuals = np.abs(values - (a * ys + b))
+        worst = int(np.argmax(residuals))
+        trial = current[:worst] + current[worst + 1 :]
+        ys_t = np.array([p[1] for p in trial])
+        values_t = np.array([p[0] for p in trial])
+        at, bt = np.polyfit(ys_t, values_t, 1)
+        r2_t = _r_squared(values_t, at * ys_t + bt)
+        if r2_t <= r2 + 1e-6:
+            break
+        current = trial
+    return current
+
+
 def _calibrate_y_axis(
     spans: list[TextSpan],
     chart_rect: fitz.Rect,
@@ -161,14 +228,23 @@ def _calibrate_y_axis(
     _, cy0, _, cy1 = chart_rect
 
     if side == "left":
-        # Left-side labels: their right edge is at or left of the plot left edge
+        # Left-side labels sit in a narrow strip just left of the plot. Bounding
+        # the strip (rather than accepting everything left of the axis) keeps
+        # billing-table numbers further left from being mistaken for ticks.
         label_spans = [
-            s for s in spans if s.bbox[2] <= bx0 + 5 and cy0 - 20 <= s.y_center <= cy1 + 20
+            s
+            for s in spans
+            if s.bbox[2] <= bx0 + 5
+            and s.x_center >= bx0 - _MAX_AXIS_STRIP
+            and cy0 - 20 <= s.y_center <= cy1 + 20
         ]
     else:
-        # Right-side labels: their left edge is at or right of the plot right edge
         label_spans = [
-            s for s in spans if s.bbox[0] >= bx1 - 5 and cy0 - 20 <= s.y_center <= cy1 + 20
+            s
+            for s in spans
+            if s.bbox[0] >= bx1 - 5
+            and s.x_center <= bx1 + _MAX_AXIS_STRIP
+            and cy0 - 20 <= s.y_center <= cy1 + 20
         ]
 
     pairs: list[tuple[float, float]] = []
@@ -191,15 +267,28 @@ def _calibrate_y_axis(
     if len(pairs) < 2:
         return None, unit, warnings
 
+    # Tick labels must span a real vertical distance; a horizontal row of numbers
+    # (e.g. a value row from an adjacent chart) shares one y and cannot be an axis.
+    y_spread = max(p[1] for p in pairs) - min(p[1] for p in pairs)
+    if y_spread < _MIN_AXIS_Y_SPREAD:
+        return None, unit, warnings
+
+    pairs = _reject_outliers(pairs)
+    if len(pairs) < 2:
+        return None, unit, warnings
+
     values = np.array([p[0] for p in pairs])
     ys = np.array([p[1] for p in pairs])
 
     fit = np.polyfit(ys, values, 1)
     a, b = float(fit[0]), float(fit[1])
-    predicted = a * ys + b
-    ss_res = float(np.sum((values - predicted) ** 2))
-    ss_tot = float(np.sum((values - values.mean()) ** 2))
-    r2 = 1.0 - ss_res / ss_tot if ss_tot > 1e-9 else 1.0
+    r2 = _r_squared(values, a * ys + b)
+
+    # A genuine value axis is highly linear; a poor fit means we collected
+    # non-tick numbers, so report the axis as uncalibrated rather than apply a
+    # scale that is wrong for every data point.
+    if r2 < _MIN_AXIS_R2:
+        return None, unit, warnings
 
     calib_points = [AxisCalibrationPoint(value=v, y=y) for v, y in pairs]
     result = _FitResult(a=a, b=b, r_squared=r2, points=calib_points)
@@ -221,11 +310,13 @@ def _calibrate_x_axis(
     spans: list[TextSpan],
     chart_rect: fitz.Rect,
     bounds: fitz.Rect | None = None,
+    exclude_ids: set[int] | None = None,
 ) -> tuple[AxisInfo, list[str]]:
     bx0 = bounds.x0 if bounds else chart_rect.x0
     bx1 = bounds.x1 if bounds else chart_rect.x1
     by1 = bounds.y1 if bounds else chart_rect.y1
     plot_w = max(bx1 - bx0, 1.0)
+    exclude_ids = exclude_ids or set()
 
     # Candidate spans: at or below the plot baseline and within the chart rect.
     # The horizontal bound is the (label-expanded) chart rect rather than the
@@ -238,6 +329,7 @@ def _calibrate_x_axis(
         and s.y_center <= chart_rect.y1 + 10
         and chart_rect.x0 - 5 <= s.x_center <= chart_rect.x1 + 5
         and s.text.strip()
+        and id(s) not in exclude_ids
     ]
     if not cands:
         return AxisInfo(kind="categorical", labels=[]), []
