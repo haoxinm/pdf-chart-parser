@@ -8,13 +8,15 @@ from pdf_chart_parser.models import Axes, DataPoint, Series
 from pdf_chart_parser.vector.calibrate import y_to_value
 from pdf_chart_parser.vector.color import cluster_by_color, quantize_color
 from pdf_chart_parser.vector.drawings import RectItem
-from pdf_chart_parser.vector.text import nearest_x_label
+from pdf_chart_parser.vector.text import TextSpan, nearest_x_label
+from pdf_chart_parser.vector.value_labels import read_bar_value_labels
 
 
 def extract_bars(
     bar_rects: list[RectItem],
     axes: Axes,
     chart_rect: fitz.Rect,
+    spans: list[TextSpan] | None = None,
 ) -> tuple[list[Series], list[str]]:
     """Convert bar rectangles to Series data points.
 
@@ -23,6 +25,20 @@ def extract_bars(
     warnings: list[str] = []
     if not bar_rects:
         return [], warnings
+
+    # When the y-axis carries no usable scale, the chart likely prints each bar's
+    # value as text on/near the bar.  Read those labels and use them directly so
+    # the series is not reported as all-zeros.
+    y_calibrated = len(axes.y_primary.points) >= 2
+    text_values: dict[int, float] = {}
+    if not y_calibrated and spans:
+        text_values = {
+            bid: vs[0] for bid, vs in read_bar_value_labels(bar_rects, spans).items()
+        }
+        if text_values:
+            warnings.append(
+                f"y-axis uncalibrated; read {len(text_values)} bar values from printed labels"
+            )
 
     # Sort bars left-to-right
     sorted_bars = sorted(bar_rects, key=lambda r: r.rect.x0)
@@ -79,7 +95,11 @@ def extract_bars(
         for i, bar in enumerate(group_bars):
             x_center = (bar.rect.x0 + bar.rect.x1) / 2
 
-            if per_bar_baseline:
+            if id(bar) in text_values:
+                # Value read from a printed label rather than measured geometry.
+                value = text_values[id(bar)]
+                baseline_y = bar.rect.y1
+            elif per_bar_baseline:
                 # Stacked bar: value = height of just this segment
                 bar_baseline_value = y_to_value(bar.rect.y1, axes.y_primary)
                 value = y_to_value(bar.rect.y0, axes.y_primary) - bar_baseline_value
@@ -92,7 +112,7 @@ def extract_bars(
                 warnings.append(f"negative bar value {value:.2f} at index {i}; clipping to 0")
                 value = 0.0
 
-            x_label = nearest_x_label(x_center, x_labels, x_domain)
+            x_label = nearest_x_label(x_center, x_labels, x_domain, axes.x.positions)
             bar_conf = _bar_confidence(bar, group_bars, axes, baseline_y)
             points.append(
                 DataPoint(

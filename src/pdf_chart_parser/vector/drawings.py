@@ -77,6 +77,11 @@ def collect_drawings(page: fitz.Page) -> dict[str, list]:
             # PDFs that draw bars via four explicit line segments instead of a 're' item.
             if fill is not None:
                 rect = _path_to_rect(deduped)
+                if rect is None:
+                    # Bars are often drawn with rounded corners, giving many edge
+                    # points rather than four; accept a filled outline that nearly
+                    # fills its bounding box as a rectangle too.
+                    rect = _filled_rect_bbox(deduped)
                 if rect is not None:
                     rects.append(
                         RectItem(rect=rect, fill=fill, stroke=stroke, width=width, seqno=seqno)
@@ -114,6 +119,34 @@ def _path_to_rect(points: list[fitz.Point]) -> fitz.Rect | None:
     x0, x1 = min(xs), max(xs)
     y0, y1 = min(ys), max(ys)
     if x1 - x0 < 0.01 or y1 - y0 < 0.01:
+        return None
+    return fitz.Rect(x0, y0, x1, y1)
+
+
+def _filled_rect_bbox(points: list[fitz.Point]) -> fitz.Rect | None:
+    """Return the bounding box of a filled outline that is essentially a rectangle.
+
+    A rounded-corner bar traces many points around its perimeter rather than the
+    four of a sharp rectangle. Such an outline still encloses nearly its whole
+    bounding box, whereas triangles, circles, and icons fill far less. Accept the
+    shape as a rectangle when its polygon area covers most of the bbox.
+    """
+    if len(points) < 4:
+        return None
+    xs = [p.x for p in points]
+    ys = [p.y for p in points]
+    x0, x1, y0, y1 = min(xs), max(xs), min(ys), max(ys)
+    bbox_area = (x1 - x0) * (y1 - y0)
+    if bbox_area < 1.0:
+        return None
+    # Shoelace area of the (closed) outline.
+    area = 0.0
+    n = len(points)
+    for i in range(n):
+        j = (i + 1) % n
+        area += points[i].x * points[j].y - points[j].x * points[i].y
+    area = abs(area) / 2.0
+    if area / bbox_area < 0.85:
         return None
     return fitz.Rect(x0, y0, x1, y1)
 

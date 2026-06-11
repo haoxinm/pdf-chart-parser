@@ -24,7 +24,7 @@ class TextSpan:
         return (self.bbox[1] + self.bbox[3]) / 2
 
 
-def collect_axis_label_rows(spans: list["TextSpan"]) -> list["TextSpan"]:
+def collect_axis_label_rows(spans: list[TextSpan]) -> list[TextSpan]:
     """Return only the topmost horizontal rows from a y-sorted span list.
 
     Groups spans into rows (same y within 8 pt), then returns rows while the
@@ -35,7 +35,7 @@ def collect_axis_label_rows(spans: list["TextSpan"]) -> list["TextSpan"]:
     if not spans:
         return []
 
-    rows: list[list["TextSpan"]] = [[spans[0]]]
+    rows: list[list[TextSpan]] = [[spans[0]]]
     for s in spans[1:]:
         if s.y_center - rows[-1][-1].y_center < 8:
             rows[-1].append(s)
@@ -53,14 +53,25 @@ def collect_axis_label_rows(spans: list["TextSpan"]) -> list["TextSpan"]:
     return result
 
 
-def nearest_x_label(x: float, labels: list[str], x_domain: fitz.Rect) -> str:
-    """Map an x coordinate to the nearest categorical label by position.
+def nearest_x_label(
+    x: float,
+    labels: list[str],
+    x_domain: fitz.Rect,
+    positions: list[float] | None = None,
+) -> str:
+    """Map an x coordinate to the nearest categorical label.
 
-    Labels are assumed evenly distributed across the plot's x domain. Used by
-    both bar and line extraction so they assign labels the same way.
+    When `positions` (the x-center of each label) is supplied, the label whose
+    position is closest to `x` wins — robust when the data does not span the full
+    axis (e.g. a line with leading empty months). Otherwise labels are assumed
+    evenly distributed across the plot's x domain. Used by both bar and line
+    extraction so they assign labels the same way.
     """
     if not labels:
         return ""
+    if positions and len(positions) == len(labels):
+        idx = min(range(len(positions)), key=lambda i: abs(positions[i] - x))
+        return labels[idx]
     plot_width = x_domain.x1 - x_domain.x0
     if plot_width <= 0:
         return labels[0]

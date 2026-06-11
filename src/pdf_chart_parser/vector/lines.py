@@ -78,7 +78,7 @@ def extract_lines(
         points: list[DataPoint] = []
         for pt in all_pts:
             value = y_to_value(pt.y, calibration)
-            x_label = nearest_x_label(pt.x, x_labels, x_domain)
+            x_label = nearest_x_label(pt.x, x_labels, x_domain, axes.x.positions)
             points.append(
                 DataPoint(
                     x_label=x_label,

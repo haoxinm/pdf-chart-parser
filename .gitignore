@@ -53,3 +53,9 @@ infra/**/errored.tfstate*
 # OS
 .DS_Store
 Thumbs.db
+
+# Test data
+*.csv
+results/
+scripts/process_blobs.sh
+scripts/diagnose.py

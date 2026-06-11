@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import fitz
 
+from pdf_chart_parser.vector.calibrate import _parse_number
 from pdf_chart_parser.vector.color import (
     COLOR_DIST_THRESHOLD,
     color_distance,
@@ -18,6 +19,8 @@ from pdf_chart_parser.vector.text import TextSpan, collect_axis_label_rows
 MIN_BARS = 4
 # Minimum points for a line series to span the plot
 MIN_LINE_POINTS = 4
+# How far left of the data the crop reaches to include a detached value axis.
+_Y_AXIS_LABEL_REACH = 160.0
 
 
 def locate_chart(
@@ -382,6 +385,31 @@ def _plot_rect(bar_rects: list[RectItem], line_paths: list[StrokedPath]) -> fitz
     return fitz.Rect(min(points_x), min(points_y), max(points_x), max(points_y))
 
 
+def horizontal_gridline_ys(
+    paths: list[StrokedPath], plot_rect: fitz.Rect
+) -> list[float]:
+    """Return y-positions of horizontal gridlines spanning the plot.
+
+    These mark true axis-value rows, letting calibration snap tick labels (whose
+    text centers can be a few points off) onto the lines actually drawn at each
+    value.
+    """
+    plot_w = max(plot_rect.x1 - plot_rect.x0, 1.0)
+    ys: list[float] = []
+    for p in paths:
+        if len(p.points) < 2:
+            continue
+        xs = [q.x for q in p.points]
+        pys = [q.y for q in p.points]
+        if (
+            max(pys) - min(pys) < 1.5
+            and (max(xs) - min(xs)) > plot_w * 0.4
+            and plot_rect.y0 - 30 <= pys[0] <= plot_rect.y1 + 30
+        ):
+            ys.append(pys[0])
+    return sorted(set(ys))
+
+
 def _compute_chart_rect(
     bar_rects: list[RectItem],
     line_paths: list[StrokedPath],
@@ -430,6 +458,20 @@ def _compute_chart_rect(
     for s in above_spans + label_spans:
         nearby_x += [s.bbox[0], s.bbox[2]]
         nearby_y += [s.bbox[1], s.bbox[3]]
+
+    # Reach the value axis even when it sits far left of the data (a plot with
+    # leading empty columns). Include numeric labels within the plot's vertical
+    # band up to the axis-strip distance; the vertical-band gate keeps billing
+    # tables below the chart from widening the crop.
+    for s in spans:
+        if (
+            s.bbox[2] <= core.x0 + 5
+            and s.x_center >= core.x0 - _Y_AXIS_LABEL_REACH
+            and core.y0 - 10 <= s.y_center <= core.y1 + 10
+            and _parse_number(s.text) is not None
+        ):
+            nearby_x += [s.bbox[0], s.bbox[2]]
+            nearby_y += [s.bbox[1], s.bbox[3]]
 
     all_x = [core.x0, core.x1] + nearby_x
     all_y = [core.y0, core.y1] + nearby_y

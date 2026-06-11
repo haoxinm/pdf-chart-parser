@@ -14,7 +14,7 @@ from pdf_chart_parser.vector.bars import extract_bars
 from pdf_chart_parser.vector.calibrate import calibrate_axes
 from pdf_chart_parser.vector.drawings import collect_drawings
 from pdf_chart_parser.vector.lines import extract_lines
-from pdf_chart_parser.vector.locate import locate_chart
+from pdf_chart_parser.vector.locate import horizontal_gridline_ys, locate_chart
 from pdf_chart_parser.vector.text import collect_text_spans
 
 
@@ -65,22 +65,47 @@ def _extract_page_markdown(doc: Any, page_index: int) -> str:
 
 
 def _select_page(doc: Any, page_hint: int | None) -> int:
-    """Return the 0-based page index most likely to contain a usage chart."""
+    """Return the 0-based page index most likely to contain a usage chart.
+
+    A page that yields an actual detectable chart (bars or lines) is preferred
+    over one that merely matches usage keywords, so bills whose bars are drawn
+    as filled line-quads (not 're' rectangles) still resolve to the chart page.
+    Keyword matches act as the tie-breaker / fallback when no page detects a
+    chart.
+    """
     if page_hint is not None:
         return max(0, min(page_hint, len(doc) - 1))
 
     best_page = 0
-    best_score = -1
+    best_score = -1.0
     for i in range(len(doc)):
         pg = doc[i]
         text = pg.get_text("text").lower()
-        score = sum(
+        keyword_score = sum(
             kw in text
             for kw in ("kwh", "usage", "kw", "$", "electric", "gas", "billing", "charges")
         )
-        drawings = pg.get_drawings()
-        rects = sum(1 for d in drawings if any(it[0] == "re" for it in d.get("items", [])))
-        score += min(rects // 5, 5)
+
+        chart_elements = 0
+        try:
+            drawings = collect_drawings(pg)
+            spans = collect_text_spans(pg)
+            location = locate_chart(drawings, spans, "auto")
+            if location is not None:
+                _, _, bar_rects, line_paths, plot_rect = location
+                # Require the plot to span a meaningful width so small logo or
+                # icon squiggles (which can pass the polyline filters) don't
+                # masquerade as charts. Weight by bar count and distinct line
+                # paths rather than raw vertices, so a noisy multi-vertex glyph
+                # cannot outrank a genuine bar chart.
+                if plot_rect.width >= 80:
+                    chart_elements = len(bar_rects) + len(line_paths)
+        except Exception:
+            chart_elements = 0
+
+        # A detected chart dominates the score; keywords only break ties or
+        # rank pages where nothing chart-like was found.
+        score = (100.0 if chart_elements else 0.0) + chart_elements + keyword_score * 0.1
         if score > best_score:
             best_score = score
             best_page = i
@@ -131,14 +156,20 @@ def _try_vector(
             )
 
         chart_rect, detected_type, bar_rects, line_paths, plot_rect = location
+        gridline_ys = horizontal_gridline_ys(drawings["paths"], plot_rect)
         axes, calibration_warnings = calibrate_axes(
-            spans, chart_rect, value_unit_hint, plot_rect=plot_rect
+            spans,
+            chart_rect,
+            value_unit_hint,
+            plot_rect=plot_rect,
+            bar_rects=bar_rects,
+            gridline_ys=gridline_ys,
         )
         warnings.extend(calibration_warnings)
 
         series = []
         if bar_rects:
-            bar_series, bar_warnings = extract_bars(bar_rects, axes, chart_rect)
+            bar_series, bar_warnings = extract_bars(bar_rects, axes, chart_rect, spans)
             warnings.extend(bar_warnings)
             series.extend(bar_series)
 
