@@ -276,6 +276,10 @@ def test_raster_uncalibrated_path_is_honest(synthetic_bar_raster_pdf, monkeypatc
 
     monkeypatch.setattr(cvp, "ocr_axis_values", lambda img: [])
     monkeypatch.setattr(cvp, "ocr_axis_labels", lambda img: [])
+    # Also neutralize the text-layer source so no axis values are available from
+    # any source — this is what "uncalibrated" must look like.
+    monkeypatch.setattr(cvp, "_text_layer_y_axis_pairs", lambda *a, **k: [])
+    monkeypatch.setattr(cvp, "_text_layer_bottom_labels", lambda *a, **k: [])
 
     result = extract_usage_chart(
         pdf_path=str(synthetic_bar_raster_pdf), return_annotated_image=False
@@ -298,6 +302,10 @@ def test_raster_calibrates_from_ocr_values(synthetic_bar_raster_pdf, monkeypatch
         cvp, "ocr_axis_values", lambda img: [(0.0, 900.0), (100.0, 500.0), (200.0, 100.0)]
     )
     monkeypatch.setattr(cvp, "ocr_axis_labels", lambda img: [])
+    # Disable the text-layer source so the strip-OCR calibration path under test
+    # is the one actually exercised.
+    monkeypatch.setattr(cvp, "_text_layer_y_axis_pairs", lambda *a, **k: [])
+    monkeypatch.setattr(cvp, "_text_layer_bottom_labels", lambda *a, **k: [])
 
     result = extract_usage_chart(
         pdf_path=str(synthetic_bar_raster_pdf), return_annotated_image=False
