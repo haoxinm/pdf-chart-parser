@@ -1,8 +1,13 @@
 FROM python:3.12-slim
 
-# Install OS-level dependencies for tesseract and opencv
+# Install OS-level dependencies for tesseract/opencv (raster fallback) and the
+# OCRmyPDF text-layer step (ghostscript, qpdf, unpaper for --deskew/--clean).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
+    ghostscript \
+    qpdf \
+    unpaper \
+    pngquant \
     libglib2.0-0 \
     libsm6 \
     libxext6 \
@@ -18,7 +23,7 @@ COPY pyproject.toml ./
 COPY src/ ./src/
 COPY README.md ./
 
-RUN uv sync --extra raster --no-dev
+RUN uv sync --extra raster --extra ocr --no-dev
 
 ENV MCP_TRANSPORT=streamable-http
 ENV HOST=0.0.0.0
