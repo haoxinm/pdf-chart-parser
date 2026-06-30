@@ -5,7 +5,8 @@ An MCP server and Python library that extracts energy-usage charts from utility-
 ## Features
 
 - **Bar, line, and hybrid (bar + line, dual y-axis)** chart types
-- **Vector-first extraction** via PyMuPDF `get_drawings()` / `get_text("dict")`; OpenCV + OCR raster fallback for scanned PDFs
+- **Vector-first extraction** via PyMuPDF `get_drawings()` / `get_text("dict")`; OpenCV raster fallback for scanned PDFs
+- **Scanned-PDF support** via an OCRmyPDF text-layer step (optional `[ocr]` extra): image-only pages get a searchable text layer so they flow through the same high-accuracy text-layer calibration as digital PDFs
 - **Full page text** returned as LLM-friendly Markdown (via `pymupdf4llm`)
 - **MCP tool** (`extract_usage_chart`) compatible with Claude and other MCP-aware LLMs
 - Supports `stdio` transport (local) and `streamable-http` (containerized deployment)
@@ -18,6 +19,7 @@ An MCP server and Python library that extracts energy-usage charts from utility-
 - Python 3.12+
 - [`uv`](https://github.com/astral-sh/uv) package manager
 - **Tesseract OCR** (required only for the `[raster]` extra): `apt-get install tesseract-ocr` or `brew install tesseract`
+- **OCRmyPDF system tools** (required only for the `[ocr]` extra, which adds a searchable text layer to scanned PDFs): `apt-get install ghostscript qpdf unpaper pngquant tesseract-ocr` or `brew install ocrmypdf`
 
 ### Quickstart
 
@@ -25,8 +27,14 @@ An MCP server and Python library that extracts energy-usage charts from utility-
 # Install (vector path only)
 uv sync
 
-# Install with raster/OCR fallback
+# Install with raster fallback
 uv sync --extra raster
+
+# Install with the OCR text-layer step for scanned PDFs
+uv sync --extra ocr
+
+# Install everything
+uv sync --extra raster --extra ocr
 
 # Run the CLI
 uv run pdf-chart-parser --help

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import fitz
@@ -16,6 +17,7 @@ from pdf_chart_parser.models import (
     Series,
 )
 from pdf_chart_parser.raster.ocr import ocr_axis_labels, ocr_axis_values
+from pdf_chart_parser.vector.text import collect_text_spans
 
 
 def extract_raster(
@@ -62,18 +64,27 @@ def extract_raster(
     bar_candidates.sort(key=lambda b: b[0])
 
     h_img, w_img = img.shape[:2]
-    bottom_strip = img[h_img * 7 // 8 :, :]
-    bottom_labels = ocr_axis_labels(bottom_strip)
+    # Prefer x-axis labels read from the page text layer (a real digital layer,
+    # or one added by OCRmyPDF for scanned pages — both far more accurate than
+    # cropping and OCR'ing a raw image strip). Fall back to strip OCR only when
+    # the page has no usable text layer.
+    bottom_labels = _text_layer_bottom_labels(page, zoom, h_img)
+    if not bottom_labels:
+        bottom_strip = img[h_img * 7 // 8 :, :]
+        bottom_labels = ocr_axis_labels(bottom_strip)
 
     warnings.append("raster fallback used; accuracy may be lower than vector path")
 
     baseline_y = max(b[1] + b[3] for b in bar_candidates)
 
-    # Calibrate the y-axis from OCR'd left-axis tick labels so bar heights map
-    # to real values. The left strip shares the full image's y coordinates, so
-    # label y-centers align with bar pixel positions.
-    left_strip = img[:, : max(w_img // 8, 1)]
-    axis_pairs = ocr_axis_values(left_strip)
+    # Calibrate the y-axis from left-axis tick labels so bar heights map to real
+    # values. Prefer the page text layer (digital, or OCRmyPDF-added for scans);
+    # both its values and y-positions are more reliable than strip OCR. Fall
+    # back to OCR'ing the left image strip when no text layer is available.
+    axis_pairs = _text_layer_y_axis_pairs(page, zoom, w_img)
+    if len(axis_pairs) < 2:
+        left_strip = img[:, : max(w_img // 8, 1)]
+        axis_pairs = ocr_axis_values(left_strip)
     calib_points: list[AxisCalibrationPoint] = []
     scale_a: float | None = None
     intercept = 0.0
@@ -155,6 +166,45 @@ def extract_raster(
         "confidence": confidence,
         "annotated_png": None,
     }
+
+
+def _parse_numeric(token: str) -> float | None:
+    """Parse a leading number from a tick label (drops $, commas, units)."""
+    cleaned = token.strip().replace(",", "").replace("$", "")
+    m = re.match(r"^(\d+(?:\.\d+)?)", cleaned)
+    return float(m.group(1)) if m else None
+
+
+def _text_layer_y_axis_pairs(page: Any, zoom: float, w_img: int) -> list[tuple[float, float]]:
+    """Return (value, y_pixel) tick pairs from numeric spans in the left gutter.
+
+    Reads the page's text layer (digital or OCRmyPDF-added) and keeps numeric
+    labels sitting in the left ~1/6 of the page — the y-axis tick column. Span
+    coordinates are in PDF points, so they are scaled by `zoom` to match the
+    rendered pixel space the bars were detected in.
+    """
+    left_limit_px = max(w_img // 6, 1)
+    pairs: list[tuple[float, float]] = []
+    for span in collect_text_spans(page):
+        if span.x_center * zoom > left_limit_px:
+            continue
+        value = _parse_numeric(span.text)
+        if value is None:
+            continue
+        pairs.append((value, span.y_center * zoom))
+    return pairs
+
+
+def _text_layer_bottom_labels(page: Any, zoom: float, h_img: int) -> list[str]:
+    """Return x-axis labels from text spans in the bottom 1/8 of the page.
+
+    Labels are ordered left-to-right so they line up with the x-sorted bars.
+    Span coordinates (PDF points) are scaled by `zoom` to match pixel space.
+    """
+    bottom_limit_px = h_img * 7 // 8
+    bottom = [s for s in collect_text_spans(page) if s.y_center * zoom >= bottom_limit_px]
+    bottom.sort(key=lambda s: s.x_center)
+    return [s.text for s in bottom if s.text]
 
 
 def _failed(warnings: list[str]) -> dict[str, Any]:

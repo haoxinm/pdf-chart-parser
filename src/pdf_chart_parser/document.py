@@ -17,6 +17,7 @@ import pymupdf4llm
 from pydantic import BaseModel, Field
 
 from pdf_chart_parser.io_utils import load_pdf_bytes
+from pdf_chart_parser.ocr_layer import add_text_layer, doc_needs_ocr
 
 # ─── Guardrails ───────────────────────────────────────────────────────────────
 # Caps keep a single call bounded in time, memory, and response size so a large
@@ -112,6 +113,16 @@ def extract_pdf_document(
             notes.append(
                 f"page selection capped at {MAX_PAGES_PROCESSED} pages (document has {total})"
             )
+
+        # If any selected page is scanned/image-only, embed a searchable text
+        # layer so its content comes back as real Markdown instead of nothing.
+        if doc_needs_ocr(doc, selected):
+            ocr_bytes, applied, ocr_note = add_text_layer(data)
+            if ocr_note:
+                notes.append(ocr_note)
+            if applied:
+                doc.close()
+                doc = fitz.open(stream=ocr_bytes, filetype="pdf")
 
         # pymupdf4llm wants 0-based page numbers; request exactly the selected set.
         md_chunks = pymupdf4llm.to_markdown(doc, pages=selected, page_chunks=True)

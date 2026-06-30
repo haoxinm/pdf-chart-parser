@@ -10,6 +10,7 @@ import pymupdf4llm
 from pdf_chart_parser.annotate import annotate_chart
 from pdf_chart_parser.io_utils import load_pdf_bytes
 from pdf_chart_parser.models import Axes
+from pdf_chart_parser.ocr_layer import add_text_layer, doc_needs_ocr
 from pdf_chart_parser.vector.bars import extract_bars
 from pdf_chart_parser.vector.calibrate import calibrate_axes
 from pdf_chart_parser.vector.drawings import collect_drawings
@@ -41,6 +42,16 @@ def extract_usage_chart(
         result["page"] = 0
         return result
 
+    # Scanned PDFs carry no text layer, so neither the vector calibration path
+    # nor page_markdown can read tick labels. Embed a searchable text layer via
+    # OCR first so a scanned bill flows through the same path as a digital one.
+    ocr_note: str | None = None
+    if doc_needs_ocr(doc):
+        ocr_bytes, applied, ocr_note = add_text_layer(pdf_bytes)
+        if applied:
+            doc.close()
+            doc = fitz.open(stream=ocr_bytes, filetype="pdf")
+
     # Select the target page first, then render markdown scoped to that page so
     # page_markdown and the reported page index describe the same page.
     target_page = _select_page(doc, page)
@@ -49,6 +60,8 @@ def extract_usage_chart(
     result = _try_vector(
         doc, target_page, chart_type, value_unit, render_dpi, return_annotated_image
     )
+    if ocr_note:
+        result["warnings"].insert(0, ocr_note)
     result["page_markdown"] = page_markdown
     result["page"] = target_page
 

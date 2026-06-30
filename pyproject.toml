@@ -21,6 +21,11 @@ raster = [
     "opencv-python-headless>=4.9.0",
     "pytesseract>=0.3.10",
 ]
+# Adds a searchable text layer to scanned PDFs so they flow through the
+# vector/text-layer path. Requires system tools: ghostscript, qpdf, tesseract.
+ocr = [
+    "ocrmypdf>=16.0.0",
+]
 
 [project.scripts]
 pdf-chart-parser = "pdf_chart_parser.cli:app"
