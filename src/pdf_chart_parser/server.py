@@ -7,6 +7,7 @@ from typing import Literal
 
 from mcp.server.fastmcp import FastMCP, Image
 
+from pdf_chart_parser.document import extract_pdf_document as _extract_pdf_document
 from pdf_chart_parser.pipeline import extract_usage_chart as _run_pipeline
 
 mcp = FastMCP(
@@ -62,6 +63,42 @@ def extract_usage_chart(
     if return_annotated_image and annotated_png:
         out.append(Image(data=annotated_png, format="png"))
     return out
+
+
+@mcp.tool()
+def extract_pdf_document(
+    pdf_path: str | None = None,
+    pdf_base64: str | None = None,
+    pdf_url: str | None = None,
+    pages: list[int] | None = None,
+    render_page_images: bool = False,
+    image_dpi: int = 150,
+) -> dict:
+    """Extract per-page text and (optionally) page images from any PDF document.
+
+    Generic, model-agnostic document reader for plan sets, permit packets, spec
+    sheets, contracts, or any multi-page PDF — not just utility-bill charts. Use
+    this whenever a skill needs the textual content of an uploaded PDF, or page
+    images for visual review.
+
+    Provide exactly one of pdf_path, pdf_base64, or pdf_url. `pages` is a 1-based
+    list selecting specific pages (default: all). Set render_page_images=true to
+    also get a base64 PNG of each page (e.g. for cover sheets, site plans, or
+    single-line diagrams that need visual inspection). Scanned/image-only pages
+    always come back with a rendered PNG so vision models can still read them.
+
+    Returns { total_pages, pages: [{ page, text (Markdown), image_png_base64? }],
+    truncated, notes }. Page/image counts and total bytes are capped so a large
+    document can never hang the turn.
+    """
+    return _extract_pdf_document(
+        pdf_path=pdf_path,
+        pdf_base64=pdf_base64,
+        pdf_url=pdf_url,
+        pages=pages,
+        render_page_images=render_page_images,
+        image_dpi=image_dpi,
+    )
 
 
 if __name__ == "__main__":
