@@ -109,24 +109,29 @@ def extract_raster(
         confidence = 0.3
         warnings.append(
             "raster: y-axis could not be calibrated (OCR unavailable or no numeric "
-            "ticks); bar values are raw pixel heights, not real units"
+            "ticks); bar values are unavailable, not real units"
         )
+
+    # A low-confidence CV fit must not masquerade as usable data: only a
+    # confident, calibrated fit is trusted enough to report real values.
+    values_calibrated = confidence >= 0.5
+    calibration_status = "calibrated" if values_calibrated else "low_confidence"
 
     series_points = []
     for i, (x, y, w, h) in enumerate(bar_candidates):
         bar_top_y = y
-        if calibrated:
+        value: float | None = None
+        if values_calibrated:
             value = scale_a * bar_top_y - scale_a * baseline_y
-        else:
-            value = float(baseline_y - bar_top_y)
-        if value < 0:
-            value = 0.0
+            if value < 0:
+                value = 0.0
+            value = round(value, 4)
         x_label = bottom_labels[i] if i < len(bottom_labels) else str(i)
         series_points.append(
             DataPoint(
                 x_label=x_label,
                 x=float(x + w // 2),
-                value=round(value, 4),
+                value=value,
                 y=float(bar_top_y),
                 baseline_y=float(baseline_y),
                 confidence=confidence,
@@ -164,6 +169,8 @@ def extract_raster(
         "series": [bar_series.model_dump()],
         "warnings": warnings,
         "confidence": confidence,
+        "values_calibrated": values_calibrated,
+        "calibration_status": calibration_status,
         "annotated_png": None,
     }
 
@@ -216,5 +223,7 @@ def _failed(warnings: list[str]) -> dict[str, Any]:
         "series": [],
         "warnings": warnings,
         "confidence": 0.0,
+        "values_calibrated": False,
+        "calibration_status": "no_chart",
         "annotated_png": None,
     }
