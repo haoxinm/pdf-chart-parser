@@ -20,6 +20,7 @@ _REQUIRED_SYNTHETIC_PDFS = [
     "hybrid.pdf",
     "bar_raster.pdf",
     "bar_with_context.pdf",
+    "bar_no_axis.pdf",
 ]
 
 
@@ -56,6 +57,11 @@ def synthetic_bar_raster_pdf() -> Path:
 @pytest.fixture
 def bar_with_context_pdf() -> Path:
     return SYNTHETIC_PDFS_DIR / "bar_with_context.pdf"
+
+
+@pytest.fixture
+def synthetic_bar_no_axis_pdf() -> Path:
+    return SYNTHETIC_PDFS_DIR / "bar_no_axis.pdf"
 
 
 @pytest.fixture
