@@ -393,6 +393,61 @@ def _make_bar_with_context_pdf(path: Path) -> None:
     doc.close()
 
 
+def _make_bar_no_axis_pdf(path: Path) -> None:
+    """Bar chart whose bars are detectable but whose y-axis prints no numeric
+    tick labels and whose bars carry no printed value labels either.
+
+    Mirrors a bill where the usage chart is visually present but has no
+    readable scale at all, so no source of real values exists.
+    """
+    import fitz
+
+    doc = fitz.open()
+    page = doc.new_page(width=612, height=792)
+
+    chart_left = 80.0
+    chart_right = 540.0
+    chart_top = 150.0
+    chart_bottom = 550.0
+    chart_w = chart_right - chart_left
+    chart_h = chart_bottom - chart_top
+
+    max_val = max(BAR_VALUES)
+    n = len(BAR_VALUES)
+    bar_width = chart_w / (n * 1.5)
+    bar_spacing = chart_w / n
+
+    # Axis lines only — no tick marks, no numeric labels, no gridlines.
+    page.draw_line(
+        fitz.Point(chart_left, chart_top), fitz.Point(chart_left, chart_bottom), width=1.5
+    )
+    page.draw_line(
+        fitz.Point(chart_left, chart_bottom), fitz.Point(chart_right, chart_bottom), width=1.5
+    )
+
+    bar_fill = (0.22, 0.47, 0.72)
+    for i, val in enumerate(BAR_VALUES):
+        bar_top = chart_bottom - (val / max_val) * chart_h
+        bar_x0 = chart_left + i * bar_spacing + (bar_spacing - bar_width) / 2
+        bar_x1 = bar_x0 + bar_width
+        page.draw_rect(
+            fitz.Rect(bar_x0, bar_top, bar_x1, chart_bottom),
+            fill=bar_fill,
+            color=None,
+        )
+        page.insert_text(
+            fitz.Point(bar_x0 + bar_width / 2 - 8, chart_bottom + 12),
+            MONTHS[i],
+            fontsize=8,
+            color=(0, 0, 0),
+        )
+
+    page.insert_text(fitz.Point(200, 130), "Monthly Usage", fontsize=12)
+
+    doc.save(str(path))
+    doc.close()
+
+
 def _make_raster_pdf(path: Path, source_pdf: Path) -> None:
     """Rasterize the bar chart PDF to create a scanned-image PDF."""
     import fitz
@@ -479,6 +534,11 @@ def main() -> None:
     print("Generating rasterized (scanned) bar chart PDF...")
     _make_raster_pdf(PDFS_DIR / "bar_raster.pdf", PDFS_DIR / "bar.pdf")
     # No expected for raster — pixel-space values are not calibrated without OCR
+
+    print("Generating bar chart PDF with no y-axis scale...")
+    _make_bar_no_axis_pdf(PDFS_DIR / "bar_no_axis.pdf")
+    # No expected values — the whole point of this fixture is that no scale
+    # exists, so values must come back uncalibrated (null).
 
     print("Generating bar-with-context chart PDF (regression fixture)...")
     _make_bar_with_context_pdf(PDFS_DIR / "bar_with_context.pdf")

@@ -38,7 +38,11 @@ class Axes(BaseModel):
 class DataPoint(BaseModel):
     x_label: str = ""
     x: float = 0.0
-    value: float
+    # None when this point's value could not be derived from a trustworthy
+    # source (a fitted y-axis scale or a printed value label). `y` and
+    # `baseline_y` still carry the detected pixel position/height so the raw
+    # geometry remains available even when the value itself is unknown.
+    value: float | None = None
     y: float = 0.0
     baseline_y: float | None = None
     confidence: float = 1.0
@@ -64,4 +68,12 @@ class ExtractionResult(BaseModel):
     series: list[Series] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     confidence: float = 0.0
+    # Explicit, machine-checkable signal for whether `series[].points[].value`
+    # holds real data. False whenever any point's value could not be derived
+    # from a usable y-axis scale or a printed value label — callers must not
+    # treat such a series as real consumption/cost data.
+    values_calibrated: bool = False
+    calibration_status: Literal[
+        "calibrated", "uncalibrated_axis", "low_confidence", "no_chart"
+    ] = "no_chart"
     page_markdown: str = ""

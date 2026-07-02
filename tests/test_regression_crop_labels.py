@@ -15,12 +15,9 @@ Covered scenarios (all exercised via the bar_with_context synthetic fixture):
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import fitz
 
 from pdf_chart_parser.pipeline import extract_usage_chart
-from pdf_chart_parser.vector.calibrate import calibrate_axes
 from pdf_chart_parser.vector.drawings import collect_drawings
 from pdf_chart_parser.vector.locate import locate_chart
 from pdf_chart_parser.vector.text import collect_text_spans

@@ -5,7 +5,7 @@ from __future__ import annotations
 import fitz
 
 from pdf_chart_parser.models import Axes, DataPoint, Series
-from pdf_chart_parser.vector.calibrate import y_to_value
+from pdf_chart_parser.vector.calibrate import is_axis_calibrated, y_to_value
 from pdf_chart_parser.vector.color import quantize_color
 from pdf_chart_parser.vector.drawings import StrokedPath
 from pdf_chart_parser.vector.text import TextSpan, nearest_x_label
@@ -75,15 +75,19 @@ def extract_lines(
                 axis_id = "y_secondary"
                 calibration = axes.y_secondary
 
+        # Lines have no printed-value-label fallback, so a point's value is only
+        # trustworthy when the axis it reads against has a usable scale.
+        axis_calibrated = is_axis_calibrated(calibration) if calibration is not None else False
+
         points: list[DataPoint] = []
         for pt in all_pts:
-            value = y_to_value(pt.y, calibration)
+            value = round(y_to_value(pt.y, calibration), 4) if axis_calibrated else None
             x_label = nearest_x_label(pt.x, x_labels, x_domain, axes.x.positions)
             points.append(
                 DataPoint(
                     x_label=x_label,
                     x=round(pt.x, 2),
-                    value=round(value, 4),
+                    value=value,
                     y=round(pt.y, 2),
                     confidence=0.9,
                 )

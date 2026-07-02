@@ -52,6 +52,19 @@ _MIN_AXIS_Y_SPREAD = 10.0
 _MIN_AXIS_R2 = 0.95
 # A tick label snaps to a gridline within this many points of its center.
 _GRIDLINE_SNAP_TOL = 7.0
+# Minimum linear-fit quality required before values derived from an axis are
+# trusted as real data rather than calibration noise.
+CALIBRATION_R2_THRESHOLD = 0.9
+
+
+def is_axis_calibrated(axis: AxisCalibration) -> bool:
+    """Return True when ``axis`` has enough well-fit tick points to trust it.
+
+    Requires at least two tick points and a linear fit quality above
+    ``CALIBRATION_R2_THRESHOLD``; anything less means values computed from
+    this axis should not be presented as real data.
+    """
+    return len(axis.points) >= 2 and axis.r_squared >= CALIBRATION_R2_THRESHOLD
 
 
 class _FitResult(NamedTuple):
