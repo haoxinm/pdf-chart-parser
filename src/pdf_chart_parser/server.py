@@ -45,6 +45,28 @@ def extract_usage_chart(
     'color'.  The caller is responsible for determining which series corresponds
     to which utility — use the bar colors, the series order, and the page
     Markdown context to make that determination.
+
+    IMPORTANT — check `values_calibrated` before using any numbers:
+    Some bills draw a chart whose bars/lines are visible but whose y-axis has
+    no usable numeric scale (fewer than two readable tick labels, or a
+    low-confidence fit). In that case this tool cannot compute real values, so
+    every affected point's 'value' is returned as null rather than a fabricated
+    number (0 or otherwise) — do not treat null as zero usage.
+
+    - `values_calibrated` (bool): true only when every point's 'value' is a
+      real, calibrated number. If false, DO NOT use 'series' as consumption or
+      cost data — the bars/lines were detected but their values could not be
+      measured.
+    - `calibration_status` (string): "calibrated", "uncalibrated_axis" (no
+      usable y-axis ticks were found), "low_confidence" (the axis or CV fit
+      was too poor to trust), or "no_chart" (no chart was found at all).
+
+    When `values_calibrated` is false, fall back to reading the document's
+    full text instead — call the generic text-extraction tool in this same
+    server (`extract_pdf_document`) on the same PDF and look for a printed
+    monthly/13-month usage table, or a per-period daily-average value, in the
+    page text. Only ask the caller/user for the numbers if neither the chart
+    nor the text yields them.
     """
     result = _run_pipeline(
         pdf_path=pdf_path,
