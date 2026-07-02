@@ -66,7 +66,7 @@ def annotate_chart(
                     outline=_ANNOTATION_CIRCLE_OUTLINE,
                     width=2,
                 )
-                label = f"{pt.value:.1f}"
+                label = f"{pt.value:.1f}" if pt.value is not None else "?"
                 tx, ty = ix + 6, iy - 12
                 bbox = draw.textbbox((tx, ty), label, font=_annot_font)
                 pad = 1

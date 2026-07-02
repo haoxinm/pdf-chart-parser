@@ -9,7 +9,7 @@ import pymupdf4llm
 
 from pdf_chart_parser.annotate import annotate_chart
 from pdf_chart_parser.io_utils import load_pdf_bytes
-from pdf_chart_parser.models import Axes
+from pdf_chart_parser.models import Axes, Series
 from pdf_chart_parser.ocr_layer import add_text_layer, doc_needs_ocr
 from pdf_chart_parser.vector.bars import extract_bars
 from pdf_chart_parser.vector.calibrate import calibrate_axes
@@ -203,6 +203,7 @@ def _try_vector(
                 warnings.append(f"annotation failed: {exc}")
 
         confidence = _compute_confidence(axes, series, warnings)
+        values_calibrated, calibration_status = _calibration_status(axes, series)
 
         return {
             "chart_found": True,
@@ -212,6 +213,8 @@ def _try_vector(
             "series": [s.model_dump() for s in series],
             "warnings": warnings,
             "confidence": confidence,
+            "values_calibrated": values_calibrated,
+            "calibration_status": calibration_status,
             "annotated_png": annotated_png,
         }
 
@@ -271,8 +274,25 @@ def _failed_result(warnings: list[str]) -> dict[str, Any]:
         "series": [],
         "warnings": warnings,
         "confidence": 0.0,
+        "values_calibrated": False,
+        "calibration_status": "no_chart",
         "annotated_png": None,
     }
+
+
+def _calibration_status(axes: Axes, series: list[Series]) -> tuple[bool, str]:
+    """Decide whether the series' values are real data or should be distrusted.
+
+    Bars and lines both null out any point they cannot derive from either a
+    well-fit y-axis scale or a printed value label, so a chart is only
+    "calibrated" when every returned point has a real value.
+    """
+    points = [p for s in series for p in s.points]
+    if points and all(p.value is not None for p in points):
+        return True, "calibrated"
+    if len(axes.y_primary.points) >= 2:
+        return False, "low_confidence"
+    return False, "uncalibrated_axis"
 
 
 def _compute_confidence(axes: Axes, series: list, warnings: list[str]) -> float:

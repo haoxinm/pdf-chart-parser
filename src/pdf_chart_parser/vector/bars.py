@@ -5,7 +5,7 @@ from __future__ import annotations
 import fitz
 
 from pdf_chart_parser.models import Axes, DataPoint, Series
-from pdf_chart_parser.vector.calibrate import y_to_value
+from pdf_chart_parser.vector.calibrate import is_axis_calibrated, y_to_value
 from pdf_chart_parser.vector.color import cluster_by_color, quantize_color
 from pdf_chart_parser.vector.drawings import RectItem
 from pdf_chart_parser.vector.text import TextSpan, nearest_x_label
@@ -29,9 +29,9 @@ def extract_bars(
     # When the y-axis carries no usable scale, the chart likely prints each bar's
     # value as text on/near the bar.  Read those labels and use them directly so
     # the series is not reported as all-zeros.
-    y_calibrated = len(axes.y_primary.points) >= 2
+    axis_calibrated = is_axis_calibrated(axes.y_primary)
     text_values: dict[int, float] = {}
-    if not y_calibrated and spans:
+    if not axis_calibrated and spans:
         text_values = {
             bid: vs[0] for bid, vs in read_bar_value_labels(bar_rects, spans).items()
         }
@@ -95,7 +95,8 @@ def extract_bars(
         for i, bar in enumerate(group_bars):
             x_center = (bar.rect.x0 + bar.rect.x1) / 2
 
-            if id(bar) in text_values:
+            from_label = id(bar) in text_values
+            if from_label:
                 # Value read from a printed label rather than measured geometry.
                 value = text_values[id(bar)]
                 baseline_y = bar.rect.y1
@@ -112,13 +113,20 @@ def extract_bars(
                 warnings.append(f"negative bar value {value:.2f} at index {i}; clipping to 0")
                 value = 0.0
 
+            # Neither a printed label nor a usable axis scale: the geometry
+            # above is not derived from real data (it collapses to 0), so
+            # report the value as unknown rather than a fabricated number.
+            final_value: float | None = value
+            if not from_label and not axis_calibrated:
+                final_value = None
+
             x_label = nearest_x_label(x_center, x_labels, x_domain, axes.x.positions)
             bar_conf = _bar_confidence(bar, group_bars, axes, baseline_y)
             points.append(
                 DataPoint(
                     x_label=x_label,
                     x=round(x_center, 2),
-                    value=round(value, 4),
+                    value=round(final_value, 4) if final_value is not None else None,
                     y=round(bar.rect.y0, 2),
                     baseline_y=round(baseline_y, 2),
                     confidence=bar_conf,
