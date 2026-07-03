@@ -70,11 +70,21 @@ def extract_usage_chart(
 
 
 def _extract_page_markdown(doc: Any, page_index: int) -> str:
-    """Return LLM-friendly markdown for the selected page."""
+    """Return LLM-friendly markdown for the selected page.
+
+    Rendered on an isolated copy of `doc` (`doc.tobytes()` round-trip), never
+    on the caller's own doc: `pymupdf4llm.to_markdown` can invoke OCR that
+    rewrites a page's text layer, which would destroy the vector text spans
+    the calibration path in `_try_vector` reads from the *same* `doc`. Working
+    on a throwaway copy keeps that guarantee regardless of call order.
+    """
+    tmp = fitz.open(stream=doc.tobytes(), filetype="pdf")
     try:
-        return pymupdf4llm.to_markdown(doc, pages=[page_index])
+        return pymupdf4llm.to_markdown(tmp, pages=[page_index])
     except Exception:
         return ""
+    finally:
+        tmp.close()
 
 
 def _select_page(doc: Any, page_hint: int | None) -> int:
