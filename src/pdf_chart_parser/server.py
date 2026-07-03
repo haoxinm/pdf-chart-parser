@@ -39,6 +39,10 @@ def extract_usage_chart(
 
     Provide exactly one of pdf_path, pdf_base64, or pdf_url.
 
+    `page`: 1-based page number (like `extract_pdf_document`). Omit to
+    auto-detect the usage-chart page — recommended. Only pass this to override
+    a wrong auto-detect.
+
     The result includes a 'series' list.  When the chart contains multiple
     utility types (e.g. electricity and gas on the same chart), each type is
     returned as a separate Series entry with its own 'id' ('s0', 's1', …) and

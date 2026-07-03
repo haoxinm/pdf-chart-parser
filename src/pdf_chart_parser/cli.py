@@ -18,7 +18,9 @@ app = typer.Typer(help="Extract energy-usage charts from utility-bill PDFs.")
 def extract(
     pdf_path: str = typer.Argument(..., help="Path to the PDF file"),
     output: Path | None = typer.Option(None, "--output", "-o", help="Write JSON result to file"),
-    page: int | None = typer.Option(None, "--page", "-p", help="Page index hint (0-based)"),
+    page: int | None = typer.Option(
+        None, "--page", "-p", help="1-based page number hint; omit to auto-detect"
+    ),
     chart_type: str = typer.Option("auto", "--chart-type", "-t", help="bar|line|hybrid|auto"),
     value_unit: str = typer.Option("auto", "--unit", "-u", help="dollars|kwh|auto"),
     no_image: bool = typer.Option(False, "--no-image", help="Skip annotated PNG output"),

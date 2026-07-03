@@ -260,7 +260,7 @@ def test_page_markdown_matches_selected_page(tmp_path):
     doc.close()
 
     result = extract_usage_chart(pdf_path=str(pdf_path), return_annotated_image=False)
-    assert result["page"] == 1
+    assert result["page"] == 2  # 1-based: BETA is the second page
     assert "BETA" in result["page_markdown"]
     assert "ALPHA" not in result["page_markdown"]
 
