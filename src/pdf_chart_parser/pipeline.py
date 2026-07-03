@@ -31,6 +31,9 @@ def extract_usage_chart(
 ) -> dict[str, Any]:
     """End-to-end extraction: returns a dict matching the ExtractionResult schema.
 
+    `page`, when given, is 1-based (matching the sibling `extract_pdf_document`
+    tool) — omit it to auto-detect the chart page.
+
     Also includes an 'annotated_png' key (bytes | None) when return_annotated_image=True.
     """
     try:
@@ -52,9 +55,13 @@ def extract_usage_chart(
             doc.close()
             doc = fitz.open(stream=ocr_bytes, filetype="pdf")
 
+    # The public `page` argument is 1-based; convert to a 0-based hint once,
+    # here, so every internal helper deals in 0-based indices.
+    page_hint = None if page is None else page - 1
+
     # Select the target page first, then render markdown scoped to that page so
     # page_markdown and the reported page index describe the same page.
-    target_page = _select_page(doc, page)
+    target_page = _select_page(doc, page_hint)
     page_markdown = _extract_page_markdown(doc, target_page)
 
     result = _try_vector(
@@ -63,7 +70,7 @@ def extract_usage_chart(
     if ocr_note:
         result["warnings"].insert(0, ocr_note)
     result["page_markdown"] = page_markdown
-    result["page"] = target_page
+    result["page"] = target_page + 1  # report 1-based, matching the input contract
 
     doc.close()
     return result
@@ -99,11 +106,12 @@ def _extract_page_markdown(doc: Any, page_index: int) -> str:
 def _select_page(doc: Any, page_hint: int | None) -> int:
     """Return the 0-based page index most likely to contain a usage chart.
 
-    A page that yields an actual detectable chart (bars or lines) is preferred
-    over one that merely matches usage keywords, so bills whose bars are drawn
-    as filled line-quads (not 're' rectangles) still resolve to the chart page.
-    Keyword matches act as the tie-breaker / fallback when no page detects a
-    chart.
+    `page_hint`, when given, is already 0-based (the public `page` argument is
+    converted once by the caller). A page that yields an actual detectable
+    chart (bars or lines) is preferred over one that merely matches usage
+    keywords, so bills whose bars are drawn as filled line-quads (not 're'
+    rectangles) still resolve to the chart page. Keyword matches act as the
+    tie-breaker / fallback when no page detects a chart.
     """
     if page_hint is not None:
         return max(0, min(page_hint, len(doc) - 1))
