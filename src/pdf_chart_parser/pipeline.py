@@ -77,10 +77,19 @@ def _extract_page_markdown(doc: Any, page_index: int) -> str:
     rewrites a page's text layer, which would destroy the vector text spans
     the calibration path in `_try_vector` reads from the *same* `doc`. Working
     on a throwaway copy keeps that guarantee regardless of call order.
+
+    OCR is also skipped outright (`use_ocr=False`) whenever the page already
+    carries an extractable text layer — either natively, or because the
+    `doc_needs_ocr`/`add_text_layer` step above already ran OCR up front for a
+    genuinely scanned page. A born-digital page never needs to be re-rendered
+    through Tesseract: pymupdf4llm's own page analysis can still flag such a
+    page as "image-heavy" (e.g. a bill whose chart page also carries a photo
+    or logo) and reach for OCR anyway, which is both unnecessary and slow.
     """
+    page_has_text = bool(doc[page_index].get_text("text").strip())
     tmp = fitz.open(stream=doc.tobytes(), filetype="pdf")
     try:
-        return pymupdf4llm.to_markdown(tmp, pages=[page_index])
+        return pymupdf4llm.to_markdown(tmp, pages=[page_index], use_ocr=not page_has_text)
     except Exception:
         return ""
     finally:
