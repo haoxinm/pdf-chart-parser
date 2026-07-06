@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 from pathlib import Path
 
+import httpx
 import pytest
 
 from pdf_chart_parser.io_utils import load_pdf_bytes
@@ -57,3 +58,72 @@ def test_non_pdf_base64_raises():
     encoded = base64.b64encode(b"not a pdf at all").decode()
     with pytest.raises(ValueError, match="magic bytes"):
         load_pdf_bytes(pdf_base64=encoded)
+
+
+class _FakeStreamCtx:
+    """Mimics the context manager returned by httpx.stream(...)."""
+
+    def __init__(self, response: httpx.Response):
+        self._response = response
+
+    def __enter__(self) -> httpx.Response:
+        return self._response
+
+    def __exit__(self, *exc_info: object) -> bool:
+        return False
+
+
+def test_load_from_url(monkeypatch, synthetic_bar_pdf):
+    raw = synthetic_bar_pdf.read_bytes()
+    url = "https://example.com/bill.pdf"
+
+    def fake_stream(method, target_url, **kwargs):
+        assert method == "GET"
+        assert target_url == url
+        req = httpx.Request(method, target_url)
+        return _FakeStreamCtx(httpx.Response(200, content=raw, request=req))
+
+    monkeypatch.setattr(httpx, "stream", fake_stream)
+    data = load_pdf_bytes(pdf_url=url)
+    assert data == raw
+
+
+def test_pdf_path_containing_url_is_fetched_over_http(monkeypatch, synthetic_bar_pdf):
+    # Regression: a presigned download URL forwarded under the wrong
+    # argument name (pdf_path instead of pdf_url — e.g. because a caller's
+    # own rewrite step swaps a short file reference for a presigned URL
+    # without regard to which argument held it) must still be fetched over
+    # HTTP rather than treated as a local filesystem path. A URL string can
+    # never Path.exists(), so without this fix the call fails instantly
+    # with a misleading "PDF not found: <url>" error and never even
+    # attempts the download.
+    raw = synthetic_bar_pdf.read_bytes()
+    url = "https://example.com/bill.pdf?X-Amz-Signature=abc"
+    calls: list[str] = []
+
+    def fake_stream(method, target_url, **kwargs):
+        calls.append(target_url)
+        req = httpx.Request(method, target_url)
+        return _FakeStreamCtx(httpx.Response(200, content=raw, request=req))
+
+    monkeypatch.setattr(httpx, "stream", fake_stream)
+    data = load_pdf_bytes(pdf_path=url)
+    assert data == raw
+    assert calls == [url]
+
+
+def test_pdf_path_url_http_error_is_not_reported_as_not_found(monkeypatch):
+    # A real HTTP failure for a URL passed as pdf_path must surface as the
+    # normal "HTTP error fetching PDF" message, not the local-file
+    # "PDF not found" message — the two failure modes need to stay
+    # distinguishable so callers/observability can tell "the object
+    # genuinely isn't there" apart from "the download failed".
+    url = "https://example.com/missing.pdf"
+
+    def fake_stream(method, target_url, **kwargs):
+        req = httpx.Request(method, target_url)
+        return _FakeStreamCtx(httpx.Response(404, content=b"", request=req))
+
+    monkeypatch.setattr(httpx, "stream", fake_stream)
+    with pytest.raises(ValueError, match="HTTP error fetching PDF"):
+        load_pdf_bytes(pdf_path=url)
