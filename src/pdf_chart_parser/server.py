@@ -32,12 +32,16 @@ def extract_usage_chart(
     return_annotated_image: bool = True,
     render_dpi: int = 200,
 ) -> list:
-    """Extract energy-usage chart data from a utility-bill PDF.
+    """Extract energy-usage chart data from a utility-bill PDF or image.
 
     Returns the full page text as Markdown, structured chart data as JSON,
     and optionally an annotated PNG of the chart region.
 
-    Provide exactly one of pdf_path, pdf_base64, or pdf_url.
+    Provide exactly one of pdf_path, pdf_base64, or pdf_url. Each accepts
+    either a PDF or a photo/scan of a bill (JPEG, PNG, GIF, BMP, TIFF, or
+    WebP) — an image input is converted into a one-page PDF internally
+    before extraction runs, so the rest of the behavior below is unchanged.
+    HEIC/HEIF images are not supported.
 
     `page`: 1-based page number (like `extract_pdf_document`). Omit to
     auto-detect the usage-chart page — recommended. Only pass this to override
@@ -100,18 +104,22 @@ def extract_pdf_document(
     render_page_images: bool = False,
     image_dpi: int = 150,
 ) -> dict:
-    """Extract per-page text and (optionally) page images from any PDF document.
+    """Extract per-page text and (optionally) page images from any PDF or image document.
 
     Generic, model-agnostic document reader for plan sets, permit packets, spec
     sheets, contracts, or any multi-page PDF — not just utility-bill charts. Use
-    this whenever a skill needs the textual content of an uploaded PDF, or page
-    images for visual review.
+    this whenever you need the textual content of a document, or page images for
+    visual review.
 
-    Provide exactly one of pdf_path, pdf_base64, or pdf_url. `pages` is a 1-based
-    list selecting specific pages (default: all). Set render_page_images=true to
-    also get a base64 PNG of each page (e.g. for cover sheets, site plans, or
-    single-line diagrams that need visual inspection). Scanned/image-only pages
-    always come back with a rendered PNG so vision models can still read them.
+    Provide exactly one of pdf_path, pdf_base64, or pdf_url. Each accepts either
+    a PDF or a single image of a document (JPEG, PNG, GIF, BMP, TIFF, or WebP);
+    an image input is converted into a one-page PDF internally before extraction
+    runs, so it comes back as a single-page result. HEIC/HEIF images are not
+    supported. `pages` is a 1-based list selecting specific pages (default: all).
+    Set render_page_images=true to also get a base64 PNG of each page (e.g. for
+    cover sheets, site plans, or single-line diagrams that need visual
+    inspection). Scanned/image-only pages always come back with a rendered PNG
+    so vision models can still read them.
 
     Returns { total_pages, pages: [{ page, text (Markdown), image_png_base64? }],
     truncated, notes }. Page/image counts and total bytes are capped so a large

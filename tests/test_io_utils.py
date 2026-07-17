@@ -50,14 +50,51 @@ def test_invalid_base64_raises():
 def test_non_pdf_bytes_raises(tmp_path):
     bad = tmp_path / "bad.pdf"
     bad.write_bytes(b"this is not a pdf")
-    with pytest.raises(ValueError, match="magic bytes"):
+    with pytest.raises(ValueError, match="does not appear to be a PDF"):
         load_pdf_bytes(pdf_path=str(bad))
 
 
 def test_non_pdf_base64_raises():
     encoded = base64.b64encode(b"not a pdf at all").decode()
-    with pytest.raises(ValueError, match="magic bytes"):
+    with pytest.raises(ValueError, match="does not appear to be a PDF"):
         load_pdf_bytes(pdf_base64=encoded)
+
+
+def _make_jpeg_bytes() -> bytes:
+    from io import BytesIO
+
+    from PIL import Image
+
+    img = Image.new("RGB", (200, 150), "white")
+    buf = BytesIO()
+    img.save(buf, "JPEG")
+    return buf.getvalue()
+
+
+def _make_png_bytes() -> bytes:
+    from io import BytesIO
+
+    from PIL import Image
+
+    img = Image.new("RGB", (200, 150), "white")
+    buf = BytesIO()
+    img.save(buf, "PNG")
+    return buf.getvalue()
+
+
+def test_image_base64_is_converted_to_pdf():
+    jpeg_bytes = _make_jpeg_bytes()
+    encoded = base64.b64encode(jpeg_bytes).decode()
+    result = load_pdf_bytes(pdf_base64=encoded)
+    assert result.startswith(b"%PDF")
+
+
+def test_image_path_is_converted_to_pdf(tmp_path):
+    png_bytes = _make_png_bytes()
+    image_path = tmp_path / "bill.png"
+    image_path.write_bytes(png_bytes)
+    result = load_pdf_bytes(pdf_path=str(image_path))
+    assert result.startswith(b"%PDF")
 
 
 class _FakeStreamCtx:
@@ -86,6 +123,21 @@ def test_load_from_url(monkeypatch, synthetic_bar_pdf):
     monkeypatch.setattr(httpx, "stream", fake_stream)
     data = load_pdf_bytes(pdf_url=url)
     assert data == raw
+
+
+def test_image_url_is_converted_to_pdf(monkeypatch):
+    jpeg_bytes = _make_jpeg_bytes()
+    url = "https://example.com/bill.jpg"
+
+    def fake_stream(method, target_url, **kwargs):
+        assert method == "GET"
+        assert target_url == url
+        req = httpx.Request(method, target_url)
+        return _FakeStreamCtx(httpx.Response(200, content=jpeg_bytes, request=req))
+
+    monkeypatch.setattr(httpx, "stream", fake_stream)
+    data = load_pdf_bytes(pdf_url=url)
+    assert data.startswith(b"%PDF")
 
 
 def test_pdf_path_containing_url_is_fetched_over_http(monkeypatch, synthetic_bar_pdf):
