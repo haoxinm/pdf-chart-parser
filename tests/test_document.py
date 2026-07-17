@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import base64
+import shutil
+from io import BytesIO
 
 import fitz  # pymupdf
 import pytest
+from PIL import Image, ImageDraw
 
 from pdf_chart_parser import document as doc_mod
 from pdf_chart_parser.document import extract_pdf_document
@@ -84,3 +87,29 @@ def test_page_cap_enforced(monkeypatch: pytest.MonkeyPatch, multipage_pdf_bytes:
 def test_requires_exactly_one_source() -> None:
     with pytest.raises(ValueError):
         extract_pdf_document()
+
+
+def test_image_input_is_converted_to_pdf() -> None:
+    """A single image (e.g. a photo of a bill) is accepted directly and
+    comes back as a one-page document — no separate PDF conversion step
+    required by the caller."""
+    img = Image.new("RGB", (400, 300), "white")
+    draw = ImageDraw.Draw(img)
+    draw.text((20, 20), "USAGE 950 kWh", fill="black")
+    buf = BytesIO()
+    img.save(buf, "PNG")
+    b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+
+    out = extract_pdf_document(pdf_base64=b64)
+
+    assert out["total_pages"] == 1
+    assert len(out["pages"]) == 1
+    assert out["pages"][0]["page"] == 1
+
+    if shutil.which("tesseract") is not None:
+        text = out["pages"][0]["text"] or ""
+        image_b64 = out["pages"][0]["image_png_base64"]
+        # Either the OCR text layer picked up the string, or a page image
+        # came back so a vision model could read it — either is acceptable
+        # structural success without pinning exact OCR output.
+        assert "950" in text or image_b64 is not None
