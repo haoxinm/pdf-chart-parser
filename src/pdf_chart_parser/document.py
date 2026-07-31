@@ -11,13 +11,17 @@ from __future__ import annotations
 
 import base64
 import re
+import time
 
 import fitz  # pymupdf
 import pymupdf4llm
 from pydantic import BaseModel, Field
 
 from pdf_chart_parser.io_utils import load_pdf_bytes
+from pdf_chart_parser.logging_utils import elapsed_ms, get_logger, new_request_id
 from pdf_chart_parser.ocr_layer import add_text_layer, doc_needs_ocr
+
+_logger = get_logger(__name__)
 
 # ─── Guardrails ───────────────────────────────────────────────────────────────
 # Caps keep a single call bounded in time, memory, and response size so a large
@@ -112,12 +116,18 @@ def extract_pdf_document(
     it more likely a multi-page request trips MAX_TOTAL_IMAGE_BYTES before all
     pages are rendered.
     """
-    data = load_pdf_bytes(pdf_path=pdf_path, pdf_base64=pdf_base64, pdf_url=pdf_url)
-    dpi = max(MIN_IMAGE_DPI, min(MAX_IMAGE_DPI, image_dpi))
-
-    notes: list[str] = []
-    doc = fitz.open(stream=data, filetype="pdf")
+    request_id = new_request_id()
+    call_start = time.perf_counter()
+    load_ms = 0.0
+    doc: fitz.Document | None = None
     try:
+        load_start = time.perf_counter()
+        data = load_pdf_bytes(pdf_path=pdf_path, pdf_base64=pdf_base64, pdf_url=pdf_url)
+        load_ms = elapsed_ms(load_start)
+        dpi = max(MIN_IMAGE_DPI, min(MAX_IMAGE_DPI, image_dpi))
+
+        notes: list[str] = []
+        doc = fitz.open(stream=data, filetype="pdf")
         total = doc.page_count
         selected, truncated = _normalize_pages(pages, total)
         if truncated:
@@ -147,7 +157,9 @@ def extract_pdf_document(
         # already had a real OCR text layer burned in by that step by the time
         # to_markdown runs, so use_ocr=False here just stops pymupdf4llm from
         # redundantly (and sometimes incorrectly) re-deciding to OCR on its own.
+        to_markdown_start = time.perf_counter()
         md_chunks = pymupdf4llm.to_markdown(doc, pages=selected, page_chunks=True, use_ocr=False)
+        to_markdown_ms = elapsed_ms(to_markdown_start)
         # to_markdown returns one chunk per requested page, in request order.
         text_by_index = {
             idx: (chunk.get("text") or "") for idx, chunk in zip(selected, md_chunks)
@@ -155,6 +167,9 @@ def extract_pdf_document(
 
         rendered_images = 0
         total_image_bytes = 0
+        total_text_chars = 0
+        rasterize_ms = 0.0
+        encode_ms = 0.0
         # Sticky flag: once the total-bytes cap trips on some page, stop even
         # attempting to rasterize later pages — rendering a PNG just to throw
         # it away (because the cap check used to happen *after* rendering) was
@@ -164,6 +179,7 @@ def extract_pdf_document(
         out_pages: list[PdfPage] = []
         for idx in selected:
             text = text_by_index.get(idx, "")
+            total_text_chars += len(text)
             image_b64: str | None = None
 
             is_image_only = _meaningful_len(text) < _IMAGE_ONLY_TEXT_THRESHOLD
@@ -180,7 +196,9 @@ def extract_pdf_document(
                     # don't rasterize it just to discard the result.
                     truncated = True
                 else:
+                    raster_start = time.perf_counter()
                     png = doc.load_page(idx).get_pixmap(dpi=dpi).tobytes("png")
+                    rasterize_ms += elapsed_ms(raster_start)
                     if total_image_bytes + len(png) > MAX_TOTAL_IMAGE_BYTES:
                         truncated = True
                         image_byte_cap_tripped = True
@@ -188,7 +206,9 @@ def extract_pdf_document(
                     else:
                         total_image_bytes += len(png)
                         rendered_images += 1
+                        encode_start = time.perf_counter()
                         image_b64 = base64.b64encode(png).decode("ascii")
+                        encode_ms += elapsed_ms(encode_start)
                         if is_image_only and not render_page_images:
                             notes.append(
                                 f"page {idx + 1} appears scanned/image-only — returning a rendered PNG"
@@ -196,11 +216,49 @@ def extract_pdf_document(
 
             out_pages.append(PdfPage(page=idx + 1, text=text, image_png_base64=image_b64))
 
-        return PdfDocument(
+        result = PdfDocument(
             total_pages=total,
             pages=out_pages,
             truncated=truncated,
             notes=notes,
         ).model_dump()
+
+        # Structured summary line: counts and timings only — never the
+        # pdf_url (may be a presigned URL over customer PII) or any page
+        # text/image bytes.
+        _logger.info(
+            "extract_pdf_document complete",
+            extra={
+                "fields": {
+                    "request_id": request_id,
+                    "total_pages": total,
+                    "pages_processed": len(selected),
+                    "images_rendered": rendered_images,
+                    "truncated": truncated,
+                    "total_text_chars": total_text_chars,
+                    "total_image_bytes": total_image_bytes,
+                    "load_ms": load_ms,
+                    "to_markdown_ms": to_markdown_ms,
+                    "rasterize_ms": round(rasterize_ms, 1),
+                    "encode_ms": round(encode_ms, 1),
+                    "total_ms": elapsed_ms(call_start),
+                }
+            },
+        )
+        return result
+    except Exception as exc:
+        _logger.warning(
+            "extract_pdf_document failed",
+            extra={
+                "fields": {
+                    "request_id": request_id,
+                    "load_ms": load_ms,
+                    "total_ms": elapsed_ms(call_start),
+                    "error_type": type(exc).__name__,
+                }
+            },
+        )
+        raise
     finally:
-        doc.close()
+        if doc is not None:
+            doc.close()
