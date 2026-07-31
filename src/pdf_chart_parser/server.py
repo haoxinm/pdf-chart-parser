@@ -102,7 +102,7 @@ def extract_pdf_document(
     pdf_url: str | None = None,
     pages: list[int] | None = None,
     render_page_images: bool = False,
-    image_dpi: int = 150,
+    image_dpi: int = 100,
 ) -> dict:
     """Extract per-page text and (optionally) page images from any PDF or image document.
 
