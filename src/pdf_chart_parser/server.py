@@ -103,7 +103,7 @@ def extract_pdf_document(
     pages: list[int] | None = None,
     render_page_images: bool = False,
     image_dpi: int = 100,
-) -> dict:
+) -> list:
     """Extract per-page text and (optionally) page images from any PDF or image document.
 
     Generic, model-agnostic document reader for plan sets, permit packets, spec
@@ -121,11 +121,15 @@ def extract_pdf_document(
     inspection). Scanned/image-only pages always come back with a rendered PNG
     so vision models can still read them.
 
-    Returns { total_pages, pages: [{ page, text (Markdown), image_png_base64? }],
-    truncated, notes }. Page/image counts and total bytes are capped so a large
-    document can never hang the turn.
+    Returns a list. The first item is
+    { total_pages, pages: [{ page, text (Markdown) }], truncated, notes } —
+    page text only, never page image bytes. It is followed by zero or more
+    image content parts, one per rendered page image, in page order; each
+    image's `_meta.page` gives its 1-based page number so it can be matched
+    back to the corresponding page's text. Page/image counts and total bytes
+    are capped so a large document can never hang the turn.
     """
-    return _extract_pdf_document(
+    doc, images = _extract_pdf_document(
         pdf_path=pdf_path,
         pdf_base64=pdf_base64,
         pdf_url=pdf_url,
@@ -133,6 +137,9 @@ def extract_pdf_document(
         render_page_images=render_page_images,
         image_dpi=image_dpi,
     )
+    out: list = [doc]
+    out.extend(images)
+    return out
 
 
 if __name__ == "__main__":

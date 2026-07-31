@@ -15,6 +15,7 @@ import time
 
 import fitz  # pymupdf
 import pymupdf4llm
+from mcp.types import ImageContent
 from pydantic import BaseModel, Field
 
 from pdf_chart_parser.io_utils import load_pdf_bytes
@@ -60,7 +61,14 @@ class PdfPage(BaseModel):
     text: str = Field(description="Page content as Markdown (pymupdf4llm).")
     image_png_base64: str | None = Field(
         default=None,
-        description="Base64-encoded PNG render of the page, when requested or for scanned pages.",
+        description=(
+            "Deprecated, always null. Rendered page images are no longer inlined "
+            "here as a duplicated base64 string — they are returned as separate "
+            "MCP ImageContent parts alongside this document (see "
+            "extract_pdf_document's return shape), each correlated to its page "
+            "via that part's _meta.page (1-based). Kept only so a caller that "
+            "still reads this field by name sees null instead of a missing key."
+        ),
     )
 
 
@@ -107,7 +115,7 @@ def extract_pdf_document(
     pages: list[int] | None = None,
     render_page_images: bool = False,
     image_dpi: int = 100,
-) -> dict:
+) -> tuple[dict, list[ImageContent]]:
     """Extract page text + optional page images from a PDF. Pure/deterministic.
 
     image_dpi defaults to 100: model image-token cost plateaus at roughly
@@ -115,6 +123,16 @@ def extract_pdf_document(
     default buys the model nothing while costing bytes and latency, and makes
     it more likely a multi-page request trips MAX_TOTAL_IMAGE_BYTES before all
     pages are rendered.
+
+    Returns (document_dict, images): document_dict is the JSON-able
+    PdfDocument shape (page text, never page image bytes); images is the list
+    of rendered page images as real MCP ImageContent parts, in page order,
+    each carrying its 1-based page number in `_meta={"page": ...}` so a caller
+    can correlate an image back to its page's text block. The caller (this
+    module's MCP tool wrapper in server.py) is responsible for assembling
+    these into the final MCP content list — this function stays a plain,
+    unit-testable Python function and only touches `mcp.types.ImageContent`
+    for the image-part construction itself.
     """
     request_id = new_request_id()
     call_start = time.perf_counter()
@@ -177,10 +195,10 @@ def extract_pdf_document(
         # already ran for every page in `selected` before this loop starts.
         image_byte_cap_tripped = False
         out_pages: list[PdfPage] = []
+        images: list[ImageContent] = []
         for idx in selected:
             text = text_by_index.get(idx, "")
             total_text_chars += len(text)
-            image_b64: str | None = None
 
             is_image_only = _meaningful_len(text) < _IMAGE_ONLY_TEXT_THRESHOLD
             want_image = render_page_images or is_image_only
@@ -209,12 +227,35 @@ def extract_pdf_document(
                         encode_start = time.perf_counter()
                         image_b64 = base64.b64encode(png).decode("ascii")
                         encode_ms += elapsed_ms(encode_start)
+                        # Constructed via the `_meta` wire alias, not the `meta`
+                        # Python field name: ImageContent has `extra="allow"`
+                        # with no `populate_by_name`, so passing `meta=` as a
+                        # kwarg silently creates a spurious *extra* field and
+                        # leaves the real (alias-backed) `.meta` attribute
+                        # `None` instead of raising — verified with a real
+                        # round-trip, not assumed. `_meta` is the only kwarg
+                        # spelling that actually populates `.meta`.
+                        images.append(
+                            ImageContent(
+                                type="image",
+                                data=image_b64,
+                                mimeType="image/png",
+                                _meta={"page": idx + 1},
+                            )
+                        )
                         if is_image_only and not render_page_images:
                             notes.append(
                                 f"page {idx + 1} appears scanned/image-only — returning a rendered PNG"
                             )
 
-            out_pages.append(PdfPage(page=idx + 1, text=text, image_png_base64=image_b64))
+            out_pages.append(PdfPage(page=idx + 1, text=text))
+
+        if images:
+            notes.append(
+                "image_png_base64 is deprecated and always null; rendered page "
+                "images are returned as separate MCP image content parts, each "
+                "correlated to its page via that part's _meta.page"
+            )
 
         result = PdfDocument(
             total_pages=total,
@@ -245,7 +286,7 @@ def extract_pdf_document(
                 }
             },
         )
-        return result
+        return result, images
     except Exception as exc:
         _logger.warning(
             "extract_pdf_document failed",
