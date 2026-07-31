@@ -170,6 +170,57 @@ def test_no_rasterization_after_byte_cap_trips(monkeypatch: pytest.MonkeyPatch) 
     assert all(p["image_png_base64"] is None for p in out["pages"][1:])
 
 
+def test_default_image_dpi_is_100(
+    monkeypatch: pytest.MonkeyPatch, multipage_pdf_bytes: bytes
+) -> None:
+    """The default image_dpi (unset) must render at 100 DPI, not the old 150."""
+    seen_dpi: list[int] = []
+    real_get_pixmap = fitz.Page.get_pixmap
+
+    def spy(self, *args, **kwargs):
+        if "dpi" in kwargs:
+            seen_dpi.append(kwargs["dpi"])
+        return real_get_pixmap(self, *args, **kwargs)
+
+    monkeypatch.setattr(fitz.Page, "get_pixmap", spy)
+
+    b64 = base64.b64encode(multipage_pdf_bytes).decode("ascii")
+    extract_pdf_document(pdf_base64=b64, render_page_images=True, pages=[1])
+
+    assert seen_dpi == [100]
+
+
+@pytest.mark.parametrize(
+    ("image_dpi", "expected_dpi"),
+    [
+        (10, 36),  # below MIN_IMAGE_DPI clamps up to the minimum
+        (500, 200),  # above MAX_IMAGE_DPI clamps down to the maximum
+    ],
+)
+def test_image_dpi_clamp_still_holds_at_extremes(
+    monkeypatch: pytest.MonkeyPatch,
+    multipage_pdf_bytes: bytes,
+    image_dpi: int,
+    expected_dpi: int,
+) -> None:
+    seen_dpi: list[int] = []
+    real_get_pixmap = fitz.Page.get_pixmap
+
+    def spy(self, *args, **kwargs):
+        if "dpi" in kwargs:
+            seen_dpi.append(kwargs["dpi"])
+        return real_get_pixmap(self, *args, **kwargs)
+
+    monkeypatch.setattr(fitz.Page, "get_pixmap", spy)
+
+    b64 = base64.b64encode(multipage_pdf_bytes).decode("ascii")
+    extract_pdf_document(
+        pdf_base64=b64, render_page_images=True, pages=[1], image_dpi=image_dpi
+    )
+
+    assert seen_dpi == [expected_dpi]
+
+
 def test_requires_exactly_one_source() -> None:
     with pytest.raises(ValueError):
         extract_pdf_document()

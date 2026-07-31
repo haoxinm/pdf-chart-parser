@@ -98,9 +98,16 @@ def extract_pdf_document(
     pdf_url: str | None = None,
     pages: list[int] | None = None,
     render_page_images: bool = False,
-    image_dpi: int = 150,
+    image_dpi: int = 100,
 ) -> dict:
-    """Extract page text + optional page images from a PDF. Pure/deterministic."""
+    """Extract page text + optional page images from a PDF. Pure/deterministic.
+
+    image_dpi defaults to 100: model image-token cost plateaus at roughly
+    2,500 tokens/image above ~100 DPI (the vision patch cap), so a higher
+    default buys the model nothing while costing bytes and latency, and makes
+    it more likely a multi-page request trips MAX_TOTAL_IMAGE_BYTES before all
+    pages are rendered.
+    """
     data = load_pdf_bytes(pdf_path=pdf_path, pdf_base64=pdf_base64, pdf_url=pdf_url)
     dpi = max(MIN_IMAGE_DPI, min(MAX_IMAGE_DPI, image_dpi))
 
