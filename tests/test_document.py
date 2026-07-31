@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import shutil
 from io import BytesIO
 
@@ -41,38 +42,73 @@ def scanned_pdf_bytes() -> bytes:
 
 def test_extracts_all_pages_text(multipage_pdf_bytes: bytes) -> None:
     b64 = base64.b64encode(multipage_pdf_bytes).decode("ascii")
-    out = extract_pdf_document(pdf_base64=b64)
+    out, images = extract_pdf_document(pdf_base64=b64)
     assert out["total_pages"] == 3
     assert len(out["pages"]) == 3
     assert out["pages"][0]["page"] == 1
     assert "Page 1" in out["pages"][0]["text"]
     # No images requested and pages are text → no image rendered.
     assert out["pages"][0]["image_png_base64"] is None
+    assert images == []
     assert out["truncated"] is False
 
 
 def test_page_selection_is_one_based(multipage_pdf_bytes: bytes) -> None:
     b64 = base64.b64encode(multipage_pdf_bytes).decode("ascii")
-    out = extract_pdf_document(pdf_base64=b64, pages=[2])
+    out, _images = extract_pdf_document(pdf_base64=b64, pages=[2])
     assert [p["page"] for p in out["pages"]] == [2]
     assert "Page 2" in out["pages"][0]["text"]
 
 
 def test_render_page_images_returns_png(multipage_pdf_bytes: bytes) -> None:
     b64 = base64.b64encode(multipage_pdf_bytes).decode("ascii")
-    out = extract_pdf_document(pdf_base64=b64, render_page_images=True, pages=[1])
-    png_b64 = out["pages"][0]["image_png_base64"]
-    assert png_b64 is not None
+    out, images = extract_pdf_document(pdf_base64=b64, render_page_images=True, pages=[1])
+    # The old inline field is deprecated and always null now — the PNG bytes
+    # live only in the returned image content parts, never duplicated here.
+    assert out["pages"][0]["image_png_base64"] is None
+    assert len(images) == 1
+    img = images[0]
+    assert img.type == "image"
+    assert img.mimeType == "image/png"
+    assert img.meta == {"page": 1}
     # Decodes to a real PNG (magic bytes).
-    assert base64.b64decode(png_b64).startswith(b"\x89PNG\r\n\x1a\n")
+    assert base64.b64decode(img.data).startswith(b"\x89PNG\r\n\x1a\n")
 
 
 def test_scanned_page_gets_image_even_without_flag(scanned_pdf_bytes: bytes) -> None:
     b64 = base64.b64encode(scanned_pdf_bytes).decode("ascii")
-    out = extract_pdf_document(pdf_base64=b64, render_page_images=False)
+    out, images = extract_pdf_document(pdf_base64=b64, render_page_images=False)
     # Image-only page → PNG returned anyway so a vision model can read it.
-    assert out["pages"][0]["image_png_base64"] is not None
+    assert out["pages"][0]["image_png_base64"] is None
+    assert len(images) == 1
+    assert images[0].meta == {"page": 1}
     assert any("scanned" in n or "image-only" in n for n in out["notes"])
+
+
+def test_image_png_base64_no_longer_duplicates_bytes_in_json(
+    multipage_pdf_bytes: bytes,
+) -> None:
+    """The whole point of this change: the PNG bytes must not exist twice —
+    once as a real image content part and once again as a base64 string
+    buried inside the JSON-serialized document dict."""
+    b64 = base64.b64encode(multipage_pdf_bytes).decode("ascii")
+    out, images = extract_pdf_document(pdf_base64=b64, render_page_images=True, pages=[1])
+    assert len(images) == 1
+    png_b64 = images[0].data
+    assert len(png_b64) > 100  # sanity: this is a real, non-trivial PNG payload
+    serialized = json.dumps(out)
+    assert png_b64 not in serialized
+    assert out["pages"][0]["image_png_base64"] is None
+    # The document dict still honestly discloses that the field is deprecated
+    # and where the bytes actually went.
+    assert any("image_png_base64 is deprecated" in n for n in out["notes"])
+
+
+def test_no_deprecation_note_when_no_images_rendered(multipage_pdf_bytes: bytes) -> None:
+    b64 = base64.b64encode(multipage_pdf_bytes).decode("ascii")
+    out, images = extract_pdf_document(pdf_base64=b64)
+    assert images == []
+    assert not any("image_png_base64 is deprecated" in n for n in out["notes"])
 
 
 def test_to_markdown_called_with_use_ocr_false(
@@ -111,7 +147,9 @@ def test_scanned_pdf_still_yields_real_text_with_use_ocr_false(
         reason="ocrmypdf not installed; install pdf-chart-parser[ocr] to enable",
     )
     pdf_bytes = synthetic_bar_raster_pdf.read_bytes()
-    out = extract_pdf_document(pdf_path=None, pdf_base64=base64.b64encode(pdf_bytes).decode("ascii"))
+    out, _images = extract_pdf_document(
+        pdf_path=None, pdf_base64=base64.b64encode(pdf_bytes).decode("ascii")
+    )
 
     if not any("OCR" in n or "ocrmypdf" in n.lower() for n in out["notes"]):
         pytest.skip("OCRmyPDF could not run in this environment")
@@ -124,7 +162,7 @@ def test_page_cap_enforced(monkeypatch: pytest.MonkeyPatch, multipage_pdf_bytes:
     # Lower the cap to 2 and confirm truncation kicks in on a 3-page doc.
     monkeypatch.setattr(doc_mod, "MAX_PAGES_PROCESSED", 2)
     b64 = base64.b64encode(multipage_pdf_bytes).decode("ascii")
-    out = extract_pdf_document(pdf_base64=b64)
+    out, _images = extract_pdf_document(pdf_base64=b64)
     assert len(out["pages"]) == 2
     assert out["truncated"] is True
 
@@ -163,11 +201,14 @@ def test_no_rasterization_after_byte_cap_trips(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(doc_mod, "MAX_TOTAL_IMAGE_BYTES", 100)
 
     b64 = base64.b64encode(data).decode("ascii")
-    out = extract_pdf_document(pdf_base64=b64, render_page_images=True)
+    out, images = extract_pdf_document(pdf_base64=b64, render_page_images=True)
 
     assert call_count == 1
     assert out["truncated"] is True
-    assert all(p["image_png_base64"] is None for p in out["pages"][1:])
+    assert all(p["image_png_base64"] is None for p in out["pages"])
+    # Page 1's own PNG already exceeds this artificially tiny cap, so the cap
+    # trips immediately and no image survives at all.
+    assert images == []
 
 
 def test_default_image_dpi_is_100(
@@ -240,13 +281,15 @@ def test_images_still_rendered_past_page_30(monkeypatch: pytest.MonkeyPatch) -> 
     doc.close()
 
     b64 = base64.b64encode(data).decode("ascii")
-    out = extract_pdf_document(pdf_base64=b64, render_page_images=True)
+    out, images = extract_pdf_document(pdf_base64=b64, render_page_images=True)
 
     assert out["total_pages"] == total_pages
     assert len(out["pages"]) == total_pages
-    # All pages get an image, well past the old 30-image cap.
-    rendered = [p for p in out["pages"] if p["image_png_base64"] is not None]
-    assert len(rendered) == total_pages
+    # All pages get an image, well past the old 30-image cap. The inline
+    # field is deprecated/always-null now — the image content parts are the
+    # only place the rendered PNGs live.
+    assert all(p["image_png_base64"] is None for p in out["pages"])
+    assert len(images) == total_pages
     assert out["truncated"] is False
 
     # Spot-check page-to-image correlation for a sample of pages, including
@@ -254,7 +297,9 @@ def test_images_still_rendered_past_page_30(monkeypatch: pytest.MonkeyPatch) -> 
     for page_num in (1, 15, 31, 35, 38):
         page_out = out["pages"][page_num - 1]
         assert page_out["page"] == page_num
-        png_bytes = base64.b64decode(page_out["image_png_base64"])
+        img_part = images[page_num - 1]
+        assert img_part.meta == {"page": page_num}
+        png_bytes = base64.b64decode(img_part.data)
         img = Image.open(BytesIO(png_bytes))
         red, _, _ = img.getpixel((10, 10))[:3]
         expected_red = round(255 * (page_num - 1) / (total_pages - 1))
@@ -262,6 +307,35 @@ def test_images_still_rendered_past_page_30(monkeypatch: pytest.MonkeyPatch) -> 
             f"page {page_num}: expected red~={expected_red}, got {red} "
             "(image/page correlation broken)"
         )
+
+
+def test_mid_document_chunk_reports_absolute_page_numbers() -> None:
+    """A chunked caller requesting pages 11..20 out of a >20-page document
+    must get back absolute (document-wide) page numbers on both the text
+    side (PdfPage.page) and the image side (_meta.page) — 11-20, never
+    0-based or chunk-relative 1-10. This is a forward-looking regression
+    guard: a later addendum to this same feature relies on absolute page
+    numbers surviving a mid-document page-range request."""
+    total_pages = 25
+    doc = fitz.open()
+    for i in range(total_pages):
+        page = doc.new_page()
+        page.insert_text((72, 72), f"Page {i + 1} heading")
+    data = doc.tobytes()
+    doc.close()
+
+    b64 = base64.b64encode(data).decode("ascii")
+    chunk_pages = list(range(11, 21))  # 1-based, pages 11..20
+    out, images = extract_pdf_document(
+        pdf_base64=b64, pages=chunk_pages, render_page_images=True
+    )
+
+    assert [p["page"] for p in out["pages"]] == chunk_pages
+    for i, page_out in enumerate(out["pages"]):
+        assert f"Page {chunk_pages[i]} heading" in page_out["text"]
+
+    assert len(images) == len(chunk_pages)
+    assert [img.meta["page"] for img in images] == chunk_pages
 
 
 def test_requires_exactly_one_source() -> None:
@@ -280,7 +354,7 @@ def test_image_input_is_converted_to_pdf() -> None:
     img.save(buf, "PNG")
     b64 = base64.b64encode(buf.getvalue()).decode("ascii")
 
-    out = extract_pdf_document(pdf_base64=b64)
+    out, images = extract_pdf_document(pdf_base64=b64)
 
     assert out["total_pages"] == 1
     assert len(out["pages"]) == 1
@@ -288,8 +362,7 @@ def test_image_input_is_converted_to_pdf() -> None:
 
     if shutil.which("tesseract") is not None:
         text = out["pages"][0]["text"] or ""
-        image_b64 = out["pages"][0]["image_png_base64"]
         # Either the OCR text layer picked up the string, or a page image
         # came back so a vision model could read it — either is acceptable
         # structural success without pinning exact OCR output.
-        assert "950" in text or image_b64 is not None
+        assert "950" in text or len(images) > 0
