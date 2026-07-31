@@ -144,6 +144,12 @@ def extract_pdf_document(
 
         rendered_images = 0
         total_image_bytes = 0
+        # Sticky flag: once the total-bytes cap trips on some page, stop even
+        # attempting to rasterize later pages — rendering a PNG just to throw
+        # it away (because the cap check used to happen *after* rendering) was
+        # pure wasted work. Per-page text extraction above is unaffected: it
+        # already ran for every page in `selected` before this loop starts.
+        image_byte_cap_tripped = False
         out_pages: list[PdfPage] = []
         for idx in selected:
             text = text_by_index.get(idx, "")
@@ -158,10 +164,15 @@ def extract_pdf_document(
                     notes.append(
                         f"image rendering capped at {MAX_IMAGES_RENDERED} images"
                     )
+                elif image_byte_cap_tripped:
+                    # Already know any further page would blow the byte cap —
+                    # don't rasterize it just to discard the result.
+                    truncated = True
                 else:
                     png = doc.load_page(idx).get_pixmap(dpi=dpi).tobytes("png")
                     if total_image_bytes + len(png) > MAX_TOTAL_IMAGE_BYTES:
                         truncated = True
+                        image_byte_cap_tripped = True
                         notes.append("image rendering stopped at the total-bytes cap")
                     else:
                         total_image_bytes += len(png)

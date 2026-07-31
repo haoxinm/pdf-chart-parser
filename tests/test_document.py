@@ -129,6 +129,47 @@ def test_page_cap_enforced(monkeypatch: pytest.MonkeyPatch, multipage_pdf_bytes:
     assert out["truncated"] is True
 
 
+def test_no_rasterization_after_byte_cap_trips(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Once the total-image-bytes cap trips, later pages must not even be
+    rasterized — get_pixmap must not be called for them at all. Asserting
+    only on the returned page list (which already correctly excludes them)
+    would miss the actual bug: wasted rasterization work for pages that are
+    thrown away."""
+    doc = fitz.open()
+    for i in range(5):
+        page = doc.new_page()
+        page.insert_text((72, 72), f"Page {i + 1}")
+    data = doc.tobytes()
+    doc.close()
+
+    real_get_pixmap = fitz.Page.get_pixmap
+    call_count = 0
+
+    def counting_get_pixmap(self, *args, **kwargs):
+        nonlocal call_count
+        # pymupdf4llm's own to_markdown call also rasterizes internally (with
+        # no "dpi" kwarg) for its layout analysis, independent of this
+        # function's own page-rendering loop below. document.py's rendering
+        # loop always calls get_pixmap(dpi=dpi) explicitly, so filter on that
+        # to isolate the calls this test actually cares about.
+        if "dpi" in kwargs:
+            call_count += 1
+        return real_get_pixmap(self, *args, **kwargs)
+
+    monkeypatch.setattr(fitz.Page, "get_pixmap", counting_get_pixmap)
+
+    # First page's PNG alone exceeds this cap, so the cap trips on page 1 and
+    # every later page should skip rasterization entirely.
+    monkeypatch.setattr(doc_mod, "MAX_TOTAL_IMAGE_BYTES", 100)
+
+    b64 = base64.b64encode(data).decode("ascii")
+    out = extract_pdf_document(pdf_base64=b64, render_page_images=True)
+
+    assert call_count == 1
+    assert out["truncated"] is True
+    assert all(p["image_png_base64"] is None for p in out["pages"][1:])
+
+
 def test_requires_exactly_one_source() -> None:
     with pytest.raises(ValueError):
         extract_pdf_document()
