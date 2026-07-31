@@ -221,6 +221,49 @@ def test_image_dpi_clamp_still_holds_at_extremes(
     assert seen_dpi == [expected_dpi]
 
 
+def test_images_still_rendered_past_page_30(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression guard for the latent "silently drops images past page 30"
+    bug: with MAX_IMAGES_RENDERED raised to 50, a document bigger than the
+    old 30-image cap must still get every page rendered, and each page's
+    rendered PNG must correlate to the correct page — not be shifted or
+    misaligned by the raised cap."""
+    total_pages = 38
+    doc = fitz.open()
+    for i in range(total_pages):
+        page = doc.new_page(width=200, height=200)
+        # Encode the page index into the red channel so the returned PNG can
+        # be checked back against the page it's supposed to belong to.
+        red_level = i / (total_pages - 1)
+        page.draw_rect(fitz.Rect(0, 0, 200, 200), fill=(red_level, 0.0, 0.0))
+        page.insert_text((10, 190), f"Page {i + 1}", color=(1, 1, 1), fontsize=8)
+    data = doc.tobytes()
+    doc.close()
+
+    b64 = base64.b64encode(data).decode("ascii")
+    out = extract_pdf_document(pdf_base64=b64, render_page_images=True)
+
+    assert out["total_pages"] == total_pages
+    assert len(out["pages"]) == total_pages
+    # All pages get an image, well past the old 30-image cap.
+    rendered = [p for p in out["pages"] if p["image_png_base64"] is not None]
+    assert len(rendered) == total_pages
+    assert out["truncated"] is False
+
+    # Spot-check page-to-image correlation for a sample of pages, including
+    # several past the old 30-page cap.
+    for page_num in (1, 15, 31, 35, 38):
+        page_out = out["pages"][page_num - 1]
+        assert page_out["page"] == page_num
+        png_bytes = base64.b64decode(page_out["image_png_base64"])
+        img = Image.open(BytesIO(png_bytes))
+        red, _, _ = img.getpixel((10, 10))[:3]
+        expected_red = round(255 * (page_num - 1) / (total_pages - 1))
+        assert abs(red - expected_red) <= 3, (
+            f"page {page_num}: expected red~={expected_red}, got {red} "
+            "(image/page correlation broken)"
+        )
+
+
 def test_requires_exactly_one_source() -> None:
     with pytest.raises(ValueError):
         extract_pdf_document()

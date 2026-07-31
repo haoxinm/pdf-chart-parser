@@ -23,7 +23,11 @@ from pdf_chart_parser.ocr_layer import add_text_layer, doc_needs_ocr
 # Caps keep a single call bounded in time, memory, and response size so a large
 # document can never hang the agent turn or blow the MCP response budget.
 MAX_PAGES_PROCESSED = 60
-MAX_IMAGES_RENDERED = 30
+# 50-page headroom buffer: real plan sets run up to ~40 pages in practice, and
+# this cap must stay comfortably above that so images aren't silently dropped
+# on a document only slightly larger than the ones already seen in practice.
+# MAX_PAGES_PROCESSED (60) already covers this buffer with room to spare.
+MAX_IMAGES_RENDERED = 50
 MAX_TOTAL_IMAGE_BYTES = 18 * 1024 * 1024  # ~18 MB of base64-decoded PNG
 MAX_IMAGE_DPI = 200
 MIN_IMAGE_DPI = 36
