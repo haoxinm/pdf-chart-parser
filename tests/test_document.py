@@ -75,6 +75,51 @@ def test_scanned_page_gets_image_even_without_flag(scanned_pdf_bytes: bytes) -> 
     assert any("scanned" in n or "image-only" in n for n in out["notes"])
 
 
+def test_to_markdown_called_with_use_ocr_false(
+    monkeypatch: pytest.MonkeyPatch, multipage_pdf_bytes: bytes
+) -> None:
+    """Regression guard for the auto-OCR corruption bug: to_markdown must be
+    called with use_ocr=False so pymupdf4llm's own image-heuristic never
+    silently discards a page's real, correctly-extracted native text."""
+    calls: list[dict] = []
+    real_to_markdown = doc_mod.pymupdf4llm.to_markdown
+
+    def spy(*args, **kwargs):
+        calls.append(kwargs)
+        return real_to_markdown(*args, **kwargs)
+
+    monkeypatch.setattr(doc_mod.pymupdf4llm, "to_markdown", spy)
+
+    b64 = base64.b64encode(multipage_pdf_bytes).decode("ascii")
+    extract_pdf_document(pdf_base64=b64)
+
+    assert len(calls) == 1
+    assert calls[0]["use_ocr"] is False
+
+
+def test_scanned_pdf_still_yields_real_text_with_use_ocr_false(
+    synthetic_bar_raster_pdf,
+) -> None:
+    """Confirms use_ocr=False on the main to_markdown call does not regress
+    genuinely scanned/image-only documents: doc_needs_ocr/add_text_layer burns
+    a real OCR text layer in *before* to_markdown runs, so to_markdown reads
+    that embedded text layer like any other native text — it is not starved
+    of the OCR it needs just because the top-level call disables its own
+    auto-OCR heuristic."""
+    pytest.importorskip(
+        "ocrmypdf",
+        reason="ocrmypdf not installed; install pdf-chart-parser[ocr] to enable",
+    )
+    pdf_bytes = synthetic_bar_raster_pdf.read_bytes()
+    out = extract_pdf_document(pdf_path=None, pdf_base64=base64.b64encode(pdf_bytes).decode("ascii"))
+
+    if not any("OCR" in n or "ocrmypdf" in n.lower() for n in out["notes"]):
+        pytest.skip("OCRmyPDF could not run in this environment")
+
+    text = out["pages"][0]["text"] or ""
+    assert len(text.strip()) >= doc_mod._IMAGE_ONLY_TEXT_THRESHOLD
+
+
 def test_page_cap_enforced(monkeypatch: pytest.MonkeyPatch, multipage_pdf_bytes: bytes) -> None:
     # Lower the cap to 2 and confirm truncation kicks in on a 3-page doc.
     monkeypatch.setattr(doc_mod, "MAX_PAGES_PROCESSED", 2)

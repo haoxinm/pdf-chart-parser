@@ -125,7 +125,18 @@ def extract_pdf_document(
                 doc = fitz.open(stream=ocr_bytes, filetype="pdf")
 
         # pymupdf4llm wants 0-based page numbers; request exactly the selected set.
-        md_chunks = pymupdf4llm.to_markdown(doc, pages=selected, page_chunks=True)
+        # use_ocr=False: pymupdf4llm's own page-analysis heuristic (image
+        # variance / edge energy / vector-glyph-count) will otherwise decide a
+        # page "needs OCR" and silently discard its real, correctly-extracted
+        # native text layer in favor of a Tesseract read of a flattened raster
+        # — a false positive on any page with an embedded photo, vicinity map,
+        # or manufacturer screenshot, which is common on plan-set cover and
+        # cutsheet pages. This is complementary to, not a regression of, the
+        # doc_needs_ocr/add_text_layer step above: a genuinely scanned page has
+        # already had a real OCR text layer burned in by that step by the time
+        # to_markdown runs, so use_ocr=False here just stops pymupdf4llm from
+        # redundantly (and sometimes incorrectly) re-deciding to OCR on its own.
+        md_chunks = pymupdf4llm.to_markdown(doc, pages=selected, page_chunks=True, use_ocr=False)
         # to_markdown returns one chunk per requested page, in request order.
         text_by_index = {
             idx: (chunk.get("text") or "") for idx, chunk in zip(selected, md_chunks)
