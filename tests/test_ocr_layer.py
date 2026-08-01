@@ -131,7 +131,7 @@ def test_document_reader_notes_ocr_on_scanned_pdf(synthetic_bar_raster_pdf):
     """A scanned PDF triggers the OCR step and records a note about it."""
     from pdf_chart_parser.document import extract_pdf_document
 
-    result = extract_pdf_document(pdf_path=str(synthetic_bar_raster_pdf))
+    result, _images, _native = extract_pdf_document(pdf_path=str(synthetic_bar_raster_pdf))
     assert any(
         "OCR" in note or "ocrmypdf" in note.lower() for note in result["notes"]
     )
