@@ -42,7 +42,7 @@ def scanned_pdf_bytes() -> bytes:
 
 def test_extracts_all_pages_text(multipage_pdf_bytes: bytes) -> None:
     b64 = base64.b64encode(multipage_pdf_bytes).decode("ascii")
-    out, images = extract_pdf_document(pdf_base64=b64)
+    out, images, _native = extract_pdf_document(pdf_base64=b64)
     assert out["total_pages"] == 3
     assert len(out["pages"]) == 3
     assert out["pages"][0]["page"] == 1
@@ -55,14 +55,14 @@ def test_extracts_all_pages_text(multipage_pdf_bytes: bytes) -> None:
 
 def test_page_selection_is_one_based(multipage_pdf_bytes: bytes) -> None:
     b64 = base64.b64encode(multipage_pdf_bytes).decode("ascii")
-    out, _images = extract_pdf_document(pdf_base64=b64, pages=[2])
+    out, _images, _native = extract_pdf_document(pdf_base64=b64, pages=[2])
     assert [p["page"] for p in out["pages"]] == [2]
     assert "Page 2" in out["pages"][0]["text"]
 
 
 def test_render_page_images_returns_png(multipage_pdf_bytes: bytes) -> None:
     b64 = base64.b64encode(multipage_pdf_bytes).decode("ascii")
-    out, images = extract_pdf_document(pdf_base64=b64, render_page_images=True, pages=[1])
+    out, images, _native = extract_pdf_document(pdf_base64=b64, render_page_images=True, pages=[1])
     # The old inline field is deprecated and always null now — the PNG bytes
     # live only in the returned image content parts, never duplicated here.
     assert out["pages"][0]["image_png_base64"] is None
@@ -77,7 +77,7 @@ def test_render_page_images_returns_png(multipage_pdf_bytes: bytes) -> None:
 
 def test_scanned_page_gets_image_even_without_flag(scanned_pdf_bytes: bytes) -> None:
     b64 = base64.b64encode(scanned_pdf_bytes).decode("ascii")
-    out, images = extract_pdf_document(pdf_base64=b64, render_page_images=False)
+    out, images, _native = extract_pdf_document(pdf_base64=b64, render_page_images=False)
     # Image-only page → PNG returned anyway so a vision model can read it.
     assert out["pages"][0]["image_png_base64"] is None
     assert len(images) == 1
@@ -92,7 +92,7 @@ def test_image_png_base64_no_longer_duplicates_bytes_in_json(
     once as a real image content part and once again as a base64 string
     buried inside the JSON-serialized document dict."""
     b64 = base64.b64encode(multipage_pdf_bytes).decode("ascii")
-    out, images = extract_pdf_document(pdf_base64=b64, render_page_images=True, pages=[1])
+    out, images, _native = extract_pdf_document(pdf_base64=b64, render_page_images=True, pages=[1])
     assert len(images) == 1
     png_b64 = images[0].data
     assert len(png_b64) > 100  # sanity: this is a real, non-trivial PNG payload
@@ -106,7 +106,7 @@ def test_image_png_base64_no_longer_duplicates_bytes_in_json(
 
 def test_no_deprecation_note_when_no_images_rendered(multipage_pdf_bytes: bytes) -> None:
     b64 = base64.b64encode(multipage_pdf_bytes).decode("ascii")
-    out, images = extract_pdf_document(pdf_base64=b64)
+    out, images, _native = extract_pdf_document(pdf_base64=b64)
     assert images == []
     assert not any("image_png_base64 is deprecated" in n for n in out["notes"])
 
@@ -147,7 +147,7 @@ def test_scanned_pdf_still_yields_real_text_with_use_ocr_false(
         reason="ocrmypdf not installed; install pdf-chart-parser[ocr] to enable",
     )
     pdf_bytes = synthetic_bar_raster_pdf.read_bytes()
-    out, _images = extract_pdf_document(
+    out, _images, _native = extract_pdf_document(
         pdf_path=None, pdf_base64=base64.b64encode(pdf_bytes).decode("ascii")
     )
 
@@ -162,7 +162,7 @@ def test_page_cap_enforced(monkeypatch: pytest.MonkeyPatch, multipage_pdf_bytes:
     # Lower the cap to 2 and confirm truncation kicks in on a 3-page doc.
     monkeypatch.setattr(doc_mod, "MAX_PAGES_PROCESSED", 2)
     b64 = base64.b64encode(multipage_pdf_bytes).decode("ascii")
-    out, _images = extract_pdf_document(pdf_base64=b64)
+    out, _images, _native = extract_pdf_document(pdf_base64=b64)
     assert len(out["pages"]) == 2
     assert out["truncated"] is True
 
@@ -201,7 +201,7 @@ def test_no_rasterization_after_byte_cap_trips(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(doc_mod, "MAX_TOTAL_IMAGE_BYTES", 100)
 
     b64 = base64.b64encode(data).decode("ascii")
-    out, images = extract_pdf_document(pdf_base64=b64, render_page_images=True)
+    out, images, _native = extract_pdf_document(pdf_base64=b64, render_page_images=True)
 
     assert call_count == 1
     assert out["truncated"] is True
@@ -281,7 +281,7 @@ def test_images_still_rendered_past_page_30(monkeypatch: pytest.MonkeyPatch) -> 
     doc.close()
 
     b64 = base64.b64encode(data).decode("ascii")
-    out, images = extract_pdf_document(pdf_base64=b64, render_page_images=True)
+    out, images, _native = extract_pdf_document(pdf_base64=b64, render_page_images=True)
 
     assert out["total_pages"] == total_pages
     assert len(out["pages"]) == total_pages
@@ -326,7 +326,7 @@ def test_mid_document_chunk_reports_absolute_page_numbers() -> None:
 
     b64 = base64.b64encode(data).decode("ascii")
     chunk_pages = list(range(11, 21))  # 1-based, pages 11..20
-    out, images = extract_pdf_document(
+    out, images, _native = extract_pdf_document(
         pdf_base64=b64, pages=chunk_pages, render_page_images=True
     )
 
@@ -354,7 +354,7 @@ def test_image_input_is_converted_to_pdf() -> None:
     img.save(buf, "PNG")
     b64 = base64.b64encode(buf.getvalue()).decode("ascii")
 
-    out, images = extract_pdf_document(pdf_base64=b64)
+    out, images, _native = extract_pdf_document(pdf_base64=b64)
 
     assert out["total_pages"] == 1
     assert len(out["pages"]) == 1

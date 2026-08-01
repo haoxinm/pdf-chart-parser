@@ -97,6 +97,10 @@ def test_extract_pdf_document_logs_summary_without_leaking_content(
 
 
 def test_extract_pdf_document_logs_failure_summary(capsys: pytest.CaptureFixture) -> None:
+    """Invalid base64 fails inside load_pdf_bytes — the fetch stage — so this
+    still raises exactly as before the fetch/parse split, and logs under the
+    fetch-specific message (see test_document.py's fetch-vs-parse tests for
+    the parse-stage's separate, non-raising failure path)."""
     with pytest.raises(ValueError):
         extract_pdf_document(pdf_base64="not-valid-base64-!!!")
 
@@ -106,7 +110,7 @@ def test_extract_pdf_document_logs_failure_summary(capsys: pytest.CaptureFixture
         line
         for line in lines
         if line.get("logger") == "pdf_chart_parser.document"
-        and line.get("message") == "extract_pdf_document failed"
+        and line.get("message") == "extract_pdf_document fetch failed"
     ]
     assert len(failure_lines) == 1
     assert isinstance(failure_lines[0]["request_id"], str) and failure_lines[0]["request_id"]

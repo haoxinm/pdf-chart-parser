@@ -103,6 +103,8 @@ def extract_pdf_document(
     pages: list[int] | None = None,
     render_page_images: bool = False,
     image_dpi: int = 100,
+    attach_native_document: bool = False,
+    attach_native_pages: list[int] | None = None,
 ) -> list:
     """Extract per-page text and (optionally) page images from any PDF or image document.
 
@@ -121,24 +123,43 @@ def extract_pdf_document(
     inspection). Scanned/image-only pages always come back with a rendered PNG
     so vision models can still read them.
 
+    `attach_native_document`/`attach_native_pages` are a LAST-RESORT failsafe,
+    off by default: when rendered page images aren't enough (or can't be
+    produced) and the caller needs the model to see the native PDF itself.
+    `attach_native_pages` (1-based, same convention as `pages`) attaches just
+    those pages as a small sub-PDF; `attach_native_document` attaches the
+    whole original PDF. If both are set, whole-document wins. Use sparingly —
+    this bypasses the normal page-image path and its caller is responsible
+    for any provider-specific size ceiling.
+
     Returns a list. The first item is
-    { total_pages, pages: [{ page, text (Markdown) }], truncated, notes } —
-    page text only, never page image bytes. It is followed by zero or more
-    image content parts, one per rendered page image, in page order; each
-    image's `_meta.page` gives its 1-based page number so it can be matched
-    back to the corresponding page's text. Page/image counts and total bytes
-    are capped so a large document can never hang the turn.
+    { total_pages, pages: [{ page, text (Markdown) }], truncated, notes,
+    extraction_failed, reason } — page text only, never page image bytes.
+    `extraction_failed`/`reason` are populated only when the PDF's bytes were
+    fetched successfully but parsing them then failed (never for a fetch
+    failure, which still raises). It is followed by zero or more image
+    content parts, one per rendered page image, in page order; each image's
+    `_meta.page` gives its 1-based page number so it can be matched back to
+    the corresponding page's text. Finally, zero or one native-PDF-attachment
+    resource part (an MCP EmbeddedResource) is appended when
+    attach_native_document/attach_native_pages was requested and could be
+    built — its `_meta` carries `{native_attachment: true, pages: [...] |
+    "all"}`. Page/image counts and total bytes are capped so a large document
+    can never hang the turn.
     """
-    doc, images = _extract_pdf_document(
+    doc, images, native_attachments = _extract_pdf_document(
         pdf_path=pdf_path,
         pdf_base64=pdf_base64,
         pdf_url=pdf_url,
         pages=pages,
         render_page_images=render_page_images,
         image_dpi=image_dpi,
+        attach_native_document=attach_native_document,
+        attach_native_pages=attach_native_pages,
     )
     out: list = [doc]
     out.extend(images)
+    out.extend(native_attachments)
     return out
 
 
