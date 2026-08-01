@@ -153,6 +153,64 @@ async def test_extract_pdf_document_jsonrpc_content_array_shape():
     assert [p.meta["page"] for p in image_parts] == [1, 2, 3]
 
 
+def test_extract_pdf_document_wrapper_assembles_native_attachment_after_images():
+    """server.py's wrapper must assemble [doc_dict, *images,
+    *native_attachments] — the native-PDF-attachment failsafe part(s) come
+    after any rendered page images, matching the plan's stated order."""
+    from mcp.types import EmbeddedResource, ImageContent
+
+    from pdf_chart_parser.server import extract_pdf_document as tool
+
+    b64 = _make_multipage_pdf_base64(3)
+    result = tool(pdf_base64=b64, render_page_images=True, attach_native_pages=[1])
+
+    assert isinstance(result, list)
+    assert isinstance(result[0], dict)
+    assert len(result) == 1 + 3 + 1  # doc dict + 3 images + 1 native attachment
+    for part in result[1:4]:
+        assert isinstance(part, ImageContent)
+    native = result[4]
+    assert isinstance(native, EmbeddedResource)
+    assert native.meta == {"native_attachment": True, "pages": [1]}
+
+
+def test_extract_pdf_document_wrapper_no_native_attachment_by_default():
+    from pdf_chart_parser.server import extract_pdf_document as tool
+
+    b64 = _make_multipage_pdf_base64(3)
+    result = tool(pdf_base64=b64, render_page_images=False)
+
+    assert len(result) == 1  # doc dict only — no attach_native_* requested
+
+
+@pytest.mark.anyio
+async def test_extract_pdf_document_jsonrpc_native_attachment_wire_shape():
+    """A real in-process MCP client/server round trip for the
+    attach_native_pages failsafe must produce a JSON-RPC content array
+    carrying a real `resource` content block with a base64 `blob` and the
+    expected `_meta`, not an inert string or a byte-indexed object."""
+    from mcp.shared.memory import create_connected_server_and_client_session
+
+    from pdf_chart_parser.server import mcp as server_instance
+
+    b64 = _make_multipage_pdf_base64(5)
+    async with create_connected_server_and_client_session(server_instance) as client:
+        result = await client.call_tool(
+            "extract_pdf_document",
+            {"pdf_base64": b64, "attach_native_pages": [2, 3]},
+        )
+
+    assert not result.isError
+    content = result.content
+    assert content[0].type == "text"
+    resource_parts = [c for c in content if c.type == "resource"]
+    assert len(resource_parts) == 1
+    part = resource_parts[0]
+    assert part.resource.mimeType == "application/pdf"
+    assert part.meta == {"native_attachment": True, "pages": [2, 3]}
+    assert isinstance(part.resource.blob, str) and len(part.resource.blob) > 100
+
+
 @pytest.mark.anyio
 async def test_extract_pdf_document_jsonrpc_mid_chunk_absolute_pages():
     """A chunked pages:[11..20]-style call over the wire must report absolute
