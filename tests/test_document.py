@@ -236,6 +236,16 @@ def test_default_image_dpi_is_100(
     [
         (10, 36),  # below MIN_IMAGE_DPI clamps up to the minimum
         (500, 200),  # above MAX_IMAGE_DPI clamps down to the maximum
+        # 50 sits comfortably inside [MIN_IMAGE_DPI=36, MAX_IMAGE_DPI=200] and
+        # must pass through unmodified. This is not an arbitrary mid-range
+        # value: it's the low-DPI tier a caller uses for a cheap
+        # legibility-and-presence glance at manufacturer-cutsheet pages
+        # (as opposed to the 100 DPI default used for full-resolution
+        # authored-sheet review) — a pinning test that this already-existing
+        # clamp accepts it unchanged, since no clamp-boundary test above
+        # exercises a value this close to MIN_IMAGE_DPI without itself
+        # clamping.
+        (50, 50),
     ],
 )
 def test_image_dpi_clamp_still_holds_at_extremes(
@@ -336,6 +346,59 @@ def test_mid_document_chunk_reports_absolute_page_numbers() -> None:
 
     assert len(images) == len(chunk_pages)
     assert [img.meta["page"] for img in images] == chunk_pages
+
+
+def test_late_chunk_in_large_document_reports_absolute_pages_and_correct_content() -> None:
+    """A LATE, non-evenly-divisible chunk (pages 41-47 of a 47-page document —
+    the exact "N=47, final chunk [41,47]" boundary case from the chunked
+    two-tier visual-sweep design) must still report absolute page numbers,
+    not chunk-relative ones, AND each returned image's actual bytes must
+    correspond to the correct page's content — not just the page-number
+    field. This extends test_mid_document_chunk_reports_absolute_page_numbers
+    (which only exercises a mid-document chunk of a 25-page document) to the
+    specific large-document/final-chunk shape a multi-chunk sweep at the
+    50-page headroom target actually produces, and adds the
+    content-correlation check (via the same per-page red-channel encoding
+    used by test_images_still_rendered_past_page_30) that a bare page-number
+    assertion alone would not catch (e.g. an off-by-one that renumbers pages
+    but happens to shift images in lockstep would still fail this)."""
+    total_pages = 47
+    doc = fitz.open()
+    for i in range(total_pages):
+        page = doc.new_page(width=200, height=200)
+        # Encode the page index into the red channel so each page's rendered
+        # PNG can be checked back against the specific page it should
+        # correspond to, independent of the page-number metadata field.
+        red_level = i / (total_pages - 1)
+        page.draw_rect(fitz.Rect(0, 0, 200, 200), fill=(red_level, 0.0, 0.0))
+        page.insert_text((10, 190), f"Page {i + 1} heading", color=(1, 1, 1), fontsize=8)
+    data = doc.tobytes()
+    doc.close()
+
+    b64 = base64.b64encode(data).decode("ascii")
+    # Final chunk of a 10-page chunking scheme over N=47: [10*(5-1)+1, min(10*5, 47)] = [41, 47].
+    chunk_pages = list(range(41, 48))  # 1-based, pages 41..47 (7 pages)
+    out, images, _native = extract_pdf_document(
+        pdf_base64=b64, pages=chunk_pages, render_page_images=True
+    )
+
+    assert len(chunk_pages) == 7  # sanity: this is genuinely the ragged final chunk, not 10
+    assert [p["page"] for p in out["pages"]] == chunk_pages
+    for i, page_out in enumerate(out["pages"]):
+        assert f"Page {chunk_pages[i]} heading" in page_out["text"]
+
+    assert len(images) == len(chunk_pages)
+    assert [img.meta["page"] for img in images] == chunk_pages
+
+    for i, page_num in enumerate(chunk_pages):
+        png_bytes = base64.b64decode(images[i].data)
+        img = Image.open(BytesIO(png_bytes))
+        red, _, _ = img.getpixel((10, 10))[:3]
+        expected_red = round(255 * (page_num - 1) / (total_pages - 1))
+        assert abs(red - expected_red) <= 3, (
+            f"page {page_num}: expected red~={expected_red}, got {red} "
+            "(image/page correlation broken in a late, ragged chunk)"
+        )
 
 
 def test_requires_exactly_one_source() -> None:
