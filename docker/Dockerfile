@@ -19,11 +19,11 @@ RUN pip install --no-cache-dir uv
 
 WORKDIR /app
 
-COPY pyproject.toml ./
+COPY pyproject.toml uv.lock ./
 COPY src/ ./src/
 COPY README.md ./
 
-RUN uv sync --extra raster --extra ocr --no-dev
+RUN uv sync --frozen --extra raster --extra ocr --no-dev
 
 ENV MCP_TRANSPORT=streamable-http
 ENV HOST=0.0.0.0
@@ -31,4 +31,4 @@ ENV PORT=8000
 
 EXPOSE 8000
 
-CMD ["uv", "run", "python", "-m", "pdf_chart_parser.server"]
+CMD ["uv", "run", "--frozen", "--no-dev", "python", "-m", "pdf_chart_parser.server"]
