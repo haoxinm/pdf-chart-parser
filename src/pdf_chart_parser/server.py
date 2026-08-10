@@ -6,6 +6,7 @@ import os
 from typing import Literal
 
 from mcp.server.fastmcp import FastMCP, Image
+from mcp.types import ToolAnnotations
 
 from pdf_chart_parser.document import extract_pdf_document as _extract_pdf_document
 from pdf_chart_parser.pipeline import extract_usage_chart as _run_pipeline
@@ -21,7 +22,18 @@ mcp = FastMCP(
 )
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        # pdf_url fetches the PDF over the network on that call path (pdf_path/
+        # pdf_base64 stay local) — network access is conditional per call, not
+        # unconditional, but this hint declares capability, not a per-call
+        # guarantee, so True is the honest value given the tool as a whole.
+        openWorldHint=True,
+    ),
+)
 def extract_usage_chart(
     pdf_path: str | None = None,
     pdf_base64: str | None = None,
@@ -95,7 +107,17 @@ def extract_usage_chart(
     return out
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        # Same reasoning as extract_usage_chart above: pdf_url makes this an
+        # open-world fetch on that call path, even though pdf_path/pdf_base64
+        # avoid the network entirely.
+        openWorldHint=True,
+    ),
+)
 def extract_pdf_document(
     pdf_path: str | None = None,
     pdf_base64: str | None = None,

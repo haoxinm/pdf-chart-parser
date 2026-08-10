@@ -47,6 +47,27 @@ def test_server_importable():
     assert callable(extract_usage_chart)
 
 
+@pytest.mark.parametrize("tool_name", ["extract_usage_chart", "extract_pdf_document"])
+def test_tool_annotations_declare_safe_read_only_capability(tool_name):
+    """Both tools are read-only, non-mutating, and deterministic, and both can
+    fetch a caller-supplied pdf_url over the network — the registered
+    ToolAnnotations must say so, so MCP clients can make the same safety
+    assumptions without inspecting the implementation."""
+    from mcp.types import ToolAnnotations
+
+    from pdf_chart_parser.server import mcp
+
+    tool = mcp._tool_manager._tools[tool_name]
+    annotations = tool.annotations
+
+    assert annotations is not None
+    assert isinstance(annotations, ToolAnnotations)
+    assert annotations.readOnlyHint is True
+    assert annotations.destructiveHint is False
+    assert annotations.idempotentHint is True
+    assert annotations.openWorldHint is True
+
+
 def test_tool_returns_list(synthetic_bar_pdf):
     from pdf_chart_parser.server import extract_usage_chart as tool
 
